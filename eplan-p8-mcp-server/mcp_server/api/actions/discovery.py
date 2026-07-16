@@ -18,6 +18,7 @@ API surfaces used (verified against the P8 docs RAG):
 import uuid
 
 from .scripted import _execute_script
+from ._base import cs_escape
 
 
 def settings_list_children(setting_path: str) -> dict:
@@ -37,7 +38,7 @@ def settings_list_children(setting_path: str) -> dict:
         dict with "nodes" (child node names) and "settings" (leaf setting
         names) relative to the given path.
     """
-    escaped = setting_path.replace("\\", "\\\\").replace('"', '\\"')
+    escaped = cs_escape(setting_path)
     script = f'''using System;
 using System.IO;
 using System.Collections.Generic;
@@ -102,7 +103,7 @@ def list_schemes(name_filter: str = None) -> dict:
     Returns:
         dict with scheme names grouped by file extension.
     """
-    escaped_filter = (name_filter or "").replace("\\", "\\\\").replace('"', '\\"')
+    escaped_filter = cs_escape(name_filter or "")
     script = f'''using System;
 using System.IO;
 using System.Linq;
@@ -307,7 +308,7 @@ def list_enums(enum_type_name: str) -> dict:
     Returns:
         dict with the enum's value names.
     """
-    escaped = enum_type_name.replace("\\", "\\\\").replace('"', '\\"')
+    escaped = cs_escape(enum_type_name)
     script = f'''using System;
 using System.IO;
 using System.Linq;

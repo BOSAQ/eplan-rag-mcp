@@ -3,8 +3,9 @@
 Remote control of **EPLAN Electric P8** from an LLM (e.g. Claude) via MCP (Model Context Protocol).
 
 The server connects to a running EPLAN instance through the EPLAN Remote Client API
-(pythonnet / CLR) and exposes **156 MCP tools**: 7 connection/utility tools plus
-**149 EPLAN actions** (`eplan_*`).
+(pythonnet / CLR) and exposes **166 MCP tools**: 7 connection/utility tools,
+**155 EPLAN actions** (`eplan_*`), and **4 Asset Administration Shell tools**
+(`aas_*`) for AAS/AASX digital-twin export and import.
 
 The EPLAN version is **auto-detected** (newest installed under
 `C:\Program Files\EPLAN\Platform`); the LLM can override it per session via
@@ -77,7 +78,8 @@ eplan-p8-mcp-server/
 
 - **EPLAN Electric P8** installed (2024, 2025, 2026, or 2027)
 - **Python 3.10+** (64-bit, to match EPLAN's process)
-- Dependencies: `pip install -r requirements.txt` (`pythonnet`, `mcp`)
+- Dependencies: `pip install -r requirements.txt` (`pythonnet`, `mcp`,
+  `basyx-python-sdk` for the `aas_*` tools)
 
 ---
 
@@ -143,7 +145,7 @@ ssh -L 8321:localhost:8321 user@eplan-host   # keep open
 claude mcp add --transport http eplan http://localhost:8321/mcp
 ```
 
-Everything else (remoting setting in EPLAN, `connect to eplan`, all 156
+Everything else (remoting setting in EPLAN, `connect to eplan`, all 166
 tools) works exactly as in the local setup, because from the server's point
 of view EPLAN *is* local.
 
@@ -163,7 +165,7 @@ of view EPLAN *is* local.
 | `eplan_test` | Show a MessageBox inside EPLAN to verify end-to-end communication. |
 | `eplan_disconnect` | Close the active connection. |
 
-### 2. Action tools (149)
+### 2. Action tools (155)
 
 Every EPLAN action is exposed as `eplan_<action>`. Each tool's description and
 input schema are generated from the underlying Python function's docstring and
@@ -199,7 +201,20 @@ Action categories:
 | Cabinet / 3D | `calculate_cabinet_weight`, `update_segments_filling`, `topology_operation`, `import_preplanning_data`, `export/import_segments_template` |
 | Production | `export_nc_data`, `export_production_wiring` |
 | Ribbon / add-ons | `export/import_ribbon_bar`, `load_api_module`, `register/unregister_addon`, `execute_raw_action` |
-| Scripted (advanced APIs via C#) | `parts_db_query/count/get_part/update/list_product_groups`, `settings_get/set_string/bool/int/double`, `pathmap_substitute`, `pathmap_get_common_paths`, `execute_custom_script` |
+| Scripted (advanced APIs via C#) | `parts_db_query/count/get_part/create/update/list_product_groups`, `settings_get/set_string/bool/int/double`, `pathmap_substitute`, `pathmap_get_common_paths`, `execute_custom_script` |
+| Discovery (enumerate catalogs) | `settings_list_children`, `list_schemes`, `list_report_templates`, `list_layers`, `list_enums` |
+
+### 3. Asset Administration Shell tools (4)
+
+AAS/AASX digital-twin tools (`aas_*`), built on `basyx-python-sdk` (AAS
+metamodel V3). Only `aas_inspect_package` works without an EPLAN connection.
+
+| Tool | Purpose |
+|------|---------|
+| `aas_export_part` | Export a parts-DB part as an `.aasx` (Digital Nameplate + Technical Data). |
+| `aas_export_project` | Export a project as an `.aasx`: properties, part sub-shells, and embedded documents (Handover Documentation). |
+| `aas_inspect_package` | List the shells, submodels, and embedded files of any `.aasx` (offline). |
+| `aas_import_parts` | Map a supplier `.aasx` onto the parts DB (create + update), always with a `dry_run` preview first. |
 
 ---
 

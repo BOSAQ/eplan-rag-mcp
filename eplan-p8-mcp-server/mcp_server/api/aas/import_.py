@@ -10,11 +10,36 @@ from basyx.aas import model
 from . import mapping
 
 
+def _mlp_text(mlp):
+    """Best single string from a MultiLanguageProperty (prefer English)."""
+    value = mlp.value
+    if value is None:
+        return None
+    try:
+        texts = dict(value.items())
+    except AttributeError:
+        return str(value)
+    if not texts:
+        return None
+    for lang in ("en", "en-US", "en-GB"):
+        if lang in texts:
+            return texts[lang]
+    return next(iter(texts.values()))
+
+
 def _iter_properties(element, prefix=""):
-    """Yield (idShort_path, value) for all Property elements, recursing into collections."""
+    """Yield (idShort, value) for Property and MultiLanguageProperty elements,
+    recursing into collections and lists.
+
+    Handling MultiLanguageProperty is essential: the IDTA Digital Nameplate
+    template mandates MLPs for ManufacturerName etc., so a spec-conformant
+    supplier package would otherwise import nothing.
+    """
     if isinstance(element, model.Property):
         yield (prefix + (element.id_short or ""), element.value)
-    elif isinstance(element, model.SubmodelElementCollection):
+    elif isinstance(element, model.MultiLanguageProperty):
+        yield (prefix + (element.id_short or ""), _mlp_text(element))
+    elif isinstance(element, (model.SubmodelElementCollection, model.SubmodelElementList)):
         for child in element.value:
             yield from _iter_properties(child, prefix)
 
@@ -108,6 +133,7 @@ def import_parts(aasx_path: str, dry_run: bool = True) -> dict:
     # nameplate + technical data of the same shell merge into one record.
     submodels_by_id = {sm["id"]: sm for sm in inspection["submodels"]}
     plans = []
+    seen_part_numbers = set()
     for shell in inspection["shells"] or [None]:
         if shell is None:
             # Package without shells: treat all submodels as one record
@@ -128,6 +154,13 @@ def import_parts(aasx_path: str, dry_run: bool = True) -> dict:
             if merged.get(id_short):
                 part_number = merged[id_short]
                 break
+
+        # Skip a second shell resolving to the same part (e.g. shells sharing
+        # a nameplate) so a live import doesn't write the same part twice.
+        if part_number is not None and part_number in seen_part_numbers:
+            continue
+        if part_number is not None:
+            seen_part_numbers.add(part_number)
 
         fields = {}
         for id_short, value in merged.items():

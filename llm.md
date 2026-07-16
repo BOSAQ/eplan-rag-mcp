@@ -24,12 +24,18 @@ guess EPLAN action parameters**.
 
 ## 2. The local `eplan` action server
 
-It exposes **156 tools**:
+It exposes **166 tools**:
 
 - **7 connection/utility tools**: `eplan_versions`, `eplan_servers`,
   `eplan_connect`, `eplan_status`, `eplan_ping`, `eplan_test`,
   `eplan_disconnect`.
-- **149 EPLAN actions** → `eplan_<action>` (e.g. `eplan_open_project`).
+- **155 EPLAN actions** → `eplan_<action>` (e.g. `eplan_open_project`).
+  Includes 5 discovery tools (`eplan_settings_list_children`,
+  `eplan_list_schemes`, `eplan_list_report_templates`, `eplan_list_layers`,
+  `eplan_list_enums`) that enumerate real EPLAN catalogs instead of guessing.
+- **4 Asset Administration Shell tools** → `aas_<action>`
+  (`aas_export_part`, `aas_export_project`, `aas_inspect_package`,
+  `aas_import_parts`) for AAS/AASX digital-twin export and import.
 
 The EPLAN version is auto-detected (newest installed). If the user wants a
 specific version, call `eplan_versions` to list what is installed, then

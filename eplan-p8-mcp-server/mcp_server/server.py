@@ -218,12 +218,19 @@ def register_actions(actions_module, prefix="eplan_"):
 # Register all actions (executed inside a C# script under QuietMode)
 register_actions(eplan_actions)
 
-# AAS (Asset Administration Shell) tools - optional, needs basyx-python-sdk
+# AAS (Asset Administration Shell) tools - optional, needs basyx-python-sdk.
+# Only a missing basyx dependency is treated as "optional"; any other import
+# error inside the package is a real bug and must surface loudly rather than
+# silently dropping the aas_* tools.
 try:
     import api.aas as aas_tools
     register_actions(aas_tools, prefix="aas_")
-except ImportError as e:
-    print(f"AAS tools not available (pip install basyx-python-sdk): {e}", file=sys.stderr)
+except ModuleNotFoundError as e:
+    if e.name and e.name.split(".")[0] in ("basyx", "aas"):
+        print("AAS tools disabled: basyx-python-sdk not installed "
+              "(pip install basyx-python-sdk).", file=sys.stderr)
+    else:
+        raise
 
 
 # ============================================================================

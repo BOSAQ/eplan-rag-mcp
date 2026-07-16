@@ -28,9 +28,35 @@ SAMPLE_PART = {
 
 
 def test_id_short_sanitization():
-    assert builder._id_short("3RV2011-1EA10").startswith("_")
+    # basyx AASd-002: idShort must START WITH A LETTER (not a digit, not '_').
+    for raw in ["3RV2011-1EA10", "", "___", "9", "-x-"]:
+        result = builder._id_short(raw)
+        assert result[0].isalpha(), f"{raw!r} -> {result!r} must start with a letter"
     assert " " not in builder._id_short("my part name")
-    assert builder._id_short("") == "unnamed"
+    assert len(builder._id_short("z" * 500)) <= 128
+
+
+def test_id_short_accepted_by_basyx_for_leading_digit():
+    # Regression: leading-digit part numbers used to crash export.
+    from basyx.aas import model
+    model.Property(id_short=builder._id_short("3RV2011-1EA10"),
+                   value_type=model.datatypes.String, value="x")
+
+
+def test_export_part_leading_digit_part_number(tmp_path):
+    from api.aas.export_ import export_part
+    from api.actions import scripted as scripted_mod
+
+    part = dict(SAMPLE_PART, PartNr="3RV2011-1EA10")
+    saved = scripted_mod.parts_db_get_part
+    scripted_mod.parts_db_get_part = lambda pn: {"success": True, "results": {"found": True, "part": part}}
+    try:
+        out = str(tmp_path / "p.aasx")
+        result = export_part("3RV2011-1EA10", out)
+        assert result["success"], result
+        assert os.path.isfile(out)
+    finally:
+        scripted_mod.parts_db_get_part = saved
 
 
 def test_make_identifier_stable_and_safe():
@@ -142,3 +168,87 @@ def test_export_project_rejects_empty_export(tmp_path):
 
     result = export_project("Empty", str(tmp_path / "e.aasx"))
     assert result["success"] is False
+
+
+def test_export_project_duplicate_docs_both_embedded(tmp_path):
+    from api.aas.export_ import export_project
+
+    d1 = tmp_path / "a"; d1.mkdir(); (d1 / "report.pdf").write_bytes(b"%PDF-1")
+    d2 = tmp_path / "b"; d2.mkdir(); (d2 / "report.pdf").write_bytes(b"%PDF-2")
+    out = str(tmp_path / "proj.aasx")
+    result = export_project("P", out, document_paths=[str(d1 / "report.pdf"), str(d2 / "report.pdf")],
+                            properties={"Customer": "ACME"})
+    assert result["success"], result
+    inspection = inspect_package(out)
+    # Both documents survive (disambiguated), not silently collapsed to one.
+    assert len(inspection["embeddedFiles"]) == 2
+
+
+def test_export_project_duplicate_identifier_clean_error(tmp_path):
+    from api.aas.export_ import export_project
+    from api.actions import scripted as scripted_mod
+
+    saved = scripted_mod.parts_db_get_part
+    scripted_mod.parts_db_get_part = lambda pn: {"success": True, "results": {"found": True, "part": dict(SAMPLE_PART, PartNr=pn)}}
+    try:
+        # project_name equals a part number -> colliding AAS id must be a clean
+        # error dict, not an uncaught exception.
+        result = export_project("DUP", str(tmp_path / "d.aasx"),
+                                part_numbers=["DUP"], properties={"x": "y"})
+        assert result["success"] is False
+        assert "identifier" in result["error"].lower() or "duplicate" in result["error"].lower()
+    finally:
+        scripted_mod.parts_db_get_part = saved
+
+
+def test_import_reads_multilanguage_property(tmp_path):
+    from basyx.aas import model
+
+    nameplate = model.Submodel(
+        id_=builder.make_identifier("sm:nameplate", "MLP"),
+        id_short="Nameplate",
+        semantic_id=builder._external_ref(mapping.NAMEPLATE_SEMANTIC_ID),
+        submodel_element=[
+            model.MultiLanguageProperty(
+                id_short="ManufacturerName",
+                value=model.MultiLanguageTextType({"de": "Siemens AG", "en": "Siemens"}),
+            ),
+            model.MultiLanguageProperty(
+                id_short="ProductArticleNumberOfManufacturer",
+                value=model.MultiLanguageTextType({"en": "3RV-XYZ"}),
+            ),
+        ],
+    )
+    shell = builder.build_shell("MLP", "part", [nameplate])
+    path = str(tmp_path / "mlp.aasx")
+    builder.write_aasx(path, [shell], [nameplate])
+
+    result = import_parts(path, dry_run=True)
+    assert result["success"] and result["dryRun"]
+    [plan] = result["proposed"]
+    assert plan["partNumber"] == "3RV-XYZ"
+    # Prefers English text out of the MLP.
+    assert plan["fields"]["ARTICLE_MANUFACTURER"] == "Siemens"
+
+
+def test_technical_data_colliding_extra_keys_no_crash():
+    # Two keys that sanitize to the same idShort must not raise (AASd-022).
+    part = {"Manufacturer": "SIE", "a b": "1", "a_b": "2"}
+    sm = builder.build_technical_data(part, "collide")
+    tech = next(c for c in sm.submodel_element if c.id_short == "TechnicalProperties")
+    id_shorts = [e.id_short for e in tech.value]
+    assert len(id_shorts) == len(set(id_shorts))  # all unique
+
+
+def test_export_part_content_type_from_extension(tmp_path):
+    from api.aas.export_ import export_project
+
+    doc = tmp_path / "data.xlsx"
+    doc.write_bytes(b"PK\x03\x04fake")
+    out = str(tmp_path / "ct.aasx")
+    result = export_project("CT", out, document_paths=[str(doc)], properties={"x": "y"})
+    assert result["success"], result
+    inspection = inspect_package(out)
+    hd = next(sm for sm in inspection["submodels"] if sm["idShort"] == "HandoverDocumentation")
+    # Not falsely labelled application/pdf.
+    assert "data" in " ".join(inspection["embeddedFiles"])

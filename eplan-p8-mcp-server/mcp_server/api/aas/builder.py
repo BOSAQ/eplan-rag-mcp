@@ -6,6 +6,7 @@ Everything here is offline-testable; the EPLAN-facing data flows live in
 export.py / import_.py.
 """
 
+import mimetypes
 import os
 import re
 
@@ -13,6 +14,10 @@ from basyx.aas import model
 from basyx.aas.adapter import aasx
 
 from . import mapping
+
+# basyx enforces these (AAS metamodel V3): idShort must start with a letter
+# (AASd-002) and NameType is capped at 128 chars.
+_ID_SHORT_MAX = 128
 
 # Base for generated AAS/submodel identifiers. Override per site so IDs are
 # globally unique, e.g. AAS_ID_BASE=https://aas.mycompany.com/eplan
@@ -25,11 +30,13 @@ def _slug(text: str) -> str:
 
 
 def _id_short(text: str) -> str:
-    """Valid AAS idShort: letters/digits/underscore, must not start with a digit."""
-    cleaned = re.sub(r"[^A-Za-z0-9_]+", "_", str(text)).strip("_") or "unnamed"
-    if cleaned[0].isdigit():
-        cleaned = "_" + cleaned
-    return cleaned
+    """Valid AAS idShort: letters/digits/underscore, MUST start with a letter
+    (basyx AASd-002), max 128 chars."""
+    cleaned = re.sub(r"[^A-Za-z0-9_]+", "_", str(text)).strip("_")
+    if not cleaned or not cleaned[0].isalpha():
+        # A leading underscore is NOT allowed by AASd-002, so prefix a letter.
+        cleaned = "x" + cleaned
+    return cleaned[:_ID_SHORT_MAX]
 
 
 def make_identifier(kind: str, name: str) -> str:
@@ -41,6 +48,15 @@ def _external_ref(semantic_id: str) -> model.ExternalReference:
     return model.ExternalReference(
         (model.Key(model.KeyTypes.GLOBAL_REFERENCE, semantic_id),)
     )
+
+
+def _present(value) -> bool:
+    """True unless the value is absent - keeps meaningful falsy values like 0/False."""
+    return value is not None and value != ""
+
+
+def _guess_content_type(path: str) -> str:
+    return mimetypes.guess_type(path)[0] or "application/octet-stream"
 
 
 def _property(id_short: str, value: str, semantic_id: str = None) -> model.Property:
@@ -57,7 +73,7 @@ def build_nameplate(part: dict, owner_name: str) -> model.Submodel:
     elements = []
     for part_key, (id_short, semantic_id) in mapping.PART_TO_NAMEPLATE.items():
         value = part.get(part_key)
-        if value:
+        if _present(value):
             elements.append(_property(id_short, value, semantic_id))
     return model.Submodel(
         id_=make_identifier("sm:nameplate", owner_name),
@@ -78,14 +94,25 @@ def build_technical_data(part: dict, owner_name: str) -> model.Submodel:
     mapped_keys = set()
     for part_key, (id_short, semantic_id) in mapping.PART_TO_TECHNICAL_DATA.items():
         value = part.get(part_key)
-        if value:
+        if _present(value):
             general.append(_property(id_short, value, semantic_id))
             mapped_keys.add(part_key)
 
     technical = []
+    used_id_shorts = set()
     for key, value in part.items():
-        if key not in mapped_keys and key not in mapping.PART_TO_NAMEPLATE and value:
-            technical.append(_property(_id_short(key), value))
+        if key in mapped_keys or key in mapping.PART_TO_NAMEPLATE or not _present(value):
+            continue
+        # _id_short is not injective; disambiguate collisions so basyx does
+        # not reject duplicate id_shorts within the collection (AASd-022).
+        base = _id_short(key)
+        id_short = base
+        suffix = 1
+        while id_short in used_id_shorts:
+            suffix += 1
+            id_short = f"{base}_{suffix}"[:_ID_SHORT_MAX]
+        used_id_shorts.add(id_short)
+        technical.append(_property(id_short, value))
 
     collections = [
         model.SubmodelElementCollection(id_short="GeneralInformation", value=general)
@@ -116,7 +143,7 @@ def build_handover_documentation(document_files: list, owner_name: str) -> model
                 value=[
                     model.File(
                         id_short="DigitalFile",
-                        content_type="application/pdf",
+                        content_type=_guess_content_type(internal_path),
                         value=internal_path,
                     )
                 ],
@@ -157,13 +184,22 @@ def write_aasx(output_path: str, shells: list, submodels: list, embedded_files: 
         summary dict
     """
     object_store = model.DictObjectStore()
+    seen_ids = set()
     for obj in list(shells) + list(submodels):
+        if obj.id in seen_ids:
+            # Distinct inputs collapsed to the same identifier (e.g. two part
+            # numbers with the same slug, or a project named like a part).
+            raise ValueError(
+                f"Duplicate AAS identifier {obj.id!r} - two items map to the "
+                f"same id. Rename them or export separately."
+            )
+        seen_ids.add(obj.id)
         object_store.add(obj)
 
     file_store = aasx.DictSupplementaryFileContainer()
     for internal_path, local_path in (embedded_files or {}).items():
         with open(local_path, "rb") as f:
-            file_store.add_file(internal_path, f, "application/pdf")
+            file_store.add_file(internal_path, f, _guess_content_type(local_path))
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     with aasx.AASXWriter(output_path) as writer:

@@ -43,7 +43,7 @@ def export_part(part_number: str, output_path: str, include_technical_data: bool
 
     try:
         summary = builder.write_aasx(output_path, [shell], submodels)
-    except OSError as e:
+    except Exception as e:
         return {"success": False, "error": f"Could not write AASX: {e}"}
     summary["success"] = True
     summary["part"] = part
@@ -83,6 +83,7 @@ def export_project(
     Returns:
         dict with the created shells/submodels and the output path.
     """
+    import os
     from . import builder
 
     submodels = []
@@ -91,14 +92,24 @@ def export_project(
     if properties:
         submodels.append(builder.build_technical_data(properties, project_name))
 
+    # Embed documents, disambiguating colliding basenames so none is silently
+    # dropped (two files from different folders can share a name).
     embedded = {}
     missing_docs = []
-    import os
+    used_names = set()
     for doc in document_paths or []:
-        if os.path.isfile(doc):
-            embedded[f"/aasx/docs/{builder._slug(os.path.basename(doc))}"] = doc
-        else:
+        if not os.path.isfile(doc):
             missing_docs.append(doc)
+            continue
+        base = builder._slug(os.path.basename(doc))
+        stem, ext = os.path.splitext(base)
+        name = base
+        suffix = 1
+        while name in used_names:
+            suffix += 1
+            name = f"{stem}_{suffix}{ext}"
+        used_names.add(name)
+        embedded[f"/aasx/docs/{name}"] = doc
     if embedded:
         submodels.append(
             builder.build_handover_documentation(sorted(embedded.keys()), project_name)
@@ -108,10 +119,14 @@ def export_project(
     shells.append(project_shell)
 
     part_errors = {}
+    seen_parts = set()
     if part_numbers:
         from ..actions import scripted
 
         for part_number in part_numbers:
+            if part_number in seen_parts:
+                continue  # dedup: same part twice would collide on identifier
+            seen_parts.add(part_number)
             lookup = scripted.parts_db_get_part(part_number)
             results = lookup.get("results", {})
             if not (lookup.get("success") and results.get("found")):
@@ -127,16 +142,20 @@ def export_project(
             submodels.extend(part_submodels)
             shells.append(builder.build_shell(part_number, "part", part_submodels))
 
-    if not submodels and len(shells) == 1:
-        return {
-            "success": False,
-            "error": "Nothing to export: no properties, no documents, no parts. "
-                     "Provide at least one of them.",
-        }
+    if not submodels:
+        # Only the empty project shell would be written - nothing useful.
+        error = ("Nothing to export: no properties, no documents, and no parts "
+                 "resolved. Provide at least one.")
+        result = {"success": False, "error": error}
+        if part_errors:
+            result["partErrors"] = part_errors
+        if missing_docs:
+            result["missingDocuments"] = missing_docs
+        return result
 
     try:
         summary = builder.write_aasx(output_path, shells, submodels, embedded)
-    except OSError as e:
+    except Exception as e:
         return {"success": False, "error": f"Could not write AASX: {e}"}
     summary["success"] = True
     if part_errors:
