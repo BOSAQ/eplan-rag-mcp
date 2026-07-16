@@ -161,6 +161,13 @@ def parts_db_query(
     Returns:
         dict with parts list and count
     """
+    # limit is interpolated into the C# source outside any string literal, so
+    # it must be a real integer - anything else would be code injection.
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        return {"success": False, "error": f"Invalid limit: {limit!r}. Must be an integer."}
+
     if return_properties is None:
         return_properties = [
             "PartNr",

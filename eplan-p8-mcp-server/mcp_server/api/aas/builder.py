@@ -110,7 +110,11 @@ def build_technical_data(part: dict, owner_name: str) -> model.Submodel:
         suffix = 1
         while id_short in used_id_shorts:
             suffix += 1
-            id_short = f"{base}_{suffix}"[:_ID_SHORT_MAX]
+            # Truncate the base first so the suffix survives the length cap;
+            # truncating afterwards would strip the suffix off a max-length
+            # base and loop forever.
+            tail = f"_{suffix}"
+            id_short = base[:_ID_SHORT_MAX - len(tail)] + tail
         used_id_shorts.add(id_short)
         technical.append(_property(id_short, value))
 

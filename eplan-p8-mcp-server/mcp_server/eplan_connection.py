@@ -44,7 +44,9 @@ def cs_escape(value) -> str:
             out.append("\\r")
         elif ch == "\t":
             out.append("\\t")
-        elif codepoint < 0x20:
+        elif codepoint < 0x20 or codepoint in (0x85, 0x2028, 0x2029):
+            # Control chars, plus NEL/LS/PS which C# treats as line
+            # terminators even inside a regular string literal.
             out.append("\\u%04x" % codepoint)
         else:
             out.append(ch)
