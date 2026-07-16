@@ -353,6 +353,97 @@ public class PartsGet_{uuid.uuid4().hex[:6]}
     return _execute_script(script)
 
 
+def parts_db_create(part_number: str, properties: dict = None) -> dict:
+    """
+    Create a new part in the parts database and optionally set properties.
+
+    Uses MDPartsDatabase.AddPart (verified in the P8 docs; throws if the
+    part already exists — this function reports that as an error instead of
+    silently updating; use parts_db_update for existing parts).
+
+    Args:
+        part_number: Part number of the new part (must not exist yet)
+        properties: Optional dict of raw parts-DB property names to string
+            values, e.g. {"ARTICLE_MANUFACTURER": "Siemens",
+            "ARTICLE_DESCR1": "Circuit breaker"}
+
+    Returns:
+        dict with success status and the properties that were set
+    """
+    escaped_partnr = part_number.replace("\\", "\\\\").replace('"', '\\"')
+    prop_lines = ""
+    for name, value in (properties or {}).items():
+        escaped_name = str(name).replace("\\", "\\\\").replace('"', '\\"')
+        escaped_value = str(value).replace("\\", "\\\\").replace('"', '\\"')
+        prop_lines += f'''
+                    try
+                    {{
+                        var prop_{escaped_name} = part.Properties.GetType().GetProperty("{escaped_name}");
+                        if (prop_{escaped_name} != null)
+                        {{
+                            prop_{escaped_name}.SetValue(part.Properties, "{escaped_value}");
+                            setProps.Add("{escaped_name}");
+                        }}
+                        else
+                        {{
+                            failedProps.Add("{escaped_name}");
+                        }}
+                    }}
+                    catch {{ failedProps.Add("{escaped_name}"); }}
+'''
+
+    script = f'''using System;
+using System.IO;
+using System.Linq;
+using System.Collections.Generic;
+using Eplan.EplApi.MasterData;
+using Eplan.EplApi.Scripting;
+
+public class PartsCreate_{uuid.uuid4().hex[:6]}
+{{
+    [Start]
+    public void Run()
+    {{
+        var results = new Dictionary<string, object>();
+        var setProps = new List<string>();
+        var failedProps = new List<string>();
+
+        try
+        {{
+            var mdParts = new MDPartsManagement();
+            using (var db = mdParts.OpenDatabase())
+            {{
+                var existing = db.Parts.FirstOrDefault(p => p.PartNr == "{escaped_partnr}");
+                if (existing != null)
+                {{
+                    results["success"] = false;
+                    results["error"] = "Part already exists: {escaped_partnr} (use parts_db_update)";
+                }}
+                else
+                {{
+                    var part = db.AddPart("{escaped_partnr}");
+{prop_lines}
+                    results["success"] = true;
+                    results["created"] = "{escaped_partnr}";
+                    results["propertiesSet"] = setProps;
+                    if (failedProps.Count > 0) results["propertiesFailed"] = failedProps;
+                }}
+            }}
+        }}
+        catch (Exception ex)
+        {{
+            results["success"] = false;
+            results["error"] = ex.Message;
+        }}
+
+        string json = Newtonsoft.Json.JsonConvert.SerializeObject(results, Newtonsoft.Json.Formatting.Indented);
+        File.WriteAllText(@"{{{{RESULT_PATH}}}}", json);
+    }}
+}}
+'''
+    return _execute_script(script)
+
+
 def parts_db_update(part_number: str, property_name: str, property_value: str) -> dict:
     """
     Update a property on a part in the database.

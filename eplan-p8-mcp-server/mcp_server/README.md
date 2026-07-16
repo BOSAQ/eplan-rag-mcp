@@ -116,6 +116,39 @@ Start EPLAN, open Claude Code, and say `connect to eplan`.
 
 ---
 
+## Remote topology (EPLAN on another machine)
+
+The MCP server **must run on the machine where EPLAN is installed**: it loads
+EPLAN's DLLs locally and exchanges generated C# script files and JSON result
+files with EPLAN via local paths (`scripts/generated/`, `scripts/results/`).
+You cannot run the server on machine A against an EPLAN on machine B.
+
+If you work on a different machine than EPLAN, run the server there and
+connect over HTTP:
+
+**On the EPLAN machine** (Python 3.10+, this repo, `pip install -r requirements.txt`):
+
+```powershell
+$env:MCP_TRANSPORT = "http"     # default transport is stdio
+$env:MCP_HOST      = "127.0.0.1" # bind address (default)
+$env:MCP_PORT      = "8321"      # default
+python YOUR_PATH\eplan-p8-mcp-server\mcp_server\server.py
+```
+
+**On your machine**, tunnel the port (the server has no authentication — do
+not expose it beyond localhost/a trusted network) and register it:
+
+```bash
+ssh -L 8321:localhost:8321 user@eplan-host   # keep open
+claude mcp add --transport http eplan http://localhost:8321/mcp
+```
+
+Everything else (remoting setting in EPLAN, `connect to eplan`, all 156
+tools) works exactly as in the local setup, because from the server's point
+of view EPLAN *is* local.
+
+---
+
 ## Tools
 
 ### 1. Connection & utility tools

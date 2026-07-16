@@ -256,6 +256,30 @@ class EPLANConnectionManager:
             self.connected = False
             return {"alive": False, "message": f"Ping failed: {e}"}
 
+    def _log_action(self, action: str, result: dict, started: float) -> None:
+        """Append one JSON line per executed action to logs/actions.jsonl.
+
+        Persistent trace of what the LLM did in EPLAN (Audit/TODO.md item 2):
+        survives the conversation and lets failures be correlated with what
+        the user saw on screen. Never raises.
+        """
+        try:
+            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+            os.makedirs(log_dir, exist_ok=True)
+            entry = {
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "action": action,
+                "duration_s": round(time.time() - started, 3),
+                "success": result.get("success"),
+            }
+            for key in ("executor", "error", "errorType", "eplanMessages", "message"):
+                if result.get(key):
+                    entry[key] = result[key]
+            with open(os.path.join(log_dir, "actions.jsonl"), "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
     def execute_action(self, action: str, quiet_mode: bool = False) -> dict:
         """
         Execute an EPLAN action.
@@ -267,6 +291,7 @@ class EPLANConnectionManager:
         if not self.connected or not self.client:
             return {"success": False, "message": "Not connected"}
 
+        started = time.time()
         try:
             # Parse the action name (first word before any space or '/')
             action_name_match = re.match(r'^([^\s/]+)', action)
@@ -279,7 +304,12 @@ class EPLANConnectionManager:
                 logger.info(f"Executing directly: {action}")
                 self.client.SynchronousMode = True
                 self.client.ExecuteAction(action)
-                return {"success": True, "message": f"Executed directly: {action}", "action": action}
+                result = {"success": True, "message": f"Executed directly: {action}", "action": action}
+                # Script plumbing (register/execute/unregister) is logged only
+                # as part of the wrapped action, not as separate entries.
+                if action_name_lower not in ("registerscript", "executescript", "unregisterscript"):
+                    self._log_action(action, result, started)
+                return result
 
             # Parse parameters
             params = {}
@@ -312,30 +342,81 @@ class EPLANConnectionManager:
             check_keys_code = ", ".join([f'"{k}"' for k in check_keys])
             escaped_result_path = result_path.replace("\\", "\\\\")
 
-            # C# Script Content
+            # Escape hatch: EPLAN_MCP_LEGACY_CLI=1 restores the old
+            # CommandLineInterpreter-only execution (which swallows EPLAN
+            # exceptions) in case Action.Execute misbehaves for some action.
+            legacy_cli = "true" if os.environ.get("EPLAN_MCP_LEGACY_CLI") == "1" else "false"
+
+            # C# Script Content.
+            # Executor strategy (Audit/TODO.md item 1): resolve the action via
+            # ActionManager.FindAction and run Action.Execute, which lets real
+            # EPLAN exceptions propagate to our catch block — unlike
+            # CommandLineInterpreter.Execute, which swallows them and returns
+            # only false. CLI remains as fallback for unresolvable actions.
+            # A message-tree bookmark taken before execution captures the
+            # warnings/errors EPLAN emitted during the call even when no
+            # exception is thrown (covers unreliable success:false results).
             script_content = f"""using System;
 using System.IO;
 using System.Collections.Generic;
 using Eplan.EplApi.ApplicationFramework;
+using Eplan.EplApi.Base;
 using Eplan.EplApi.Scripting;
 
 public class QuietExecute_{exec_id}
 {{
+    private static string ExceptionChain(Exception ex)
+    {{
+        var parts = new List<string>();
+        while (ex != null)
+        {{
+            parts.Add(ex.Message);
+            ex = ex.InnerException;
+        }}
+        return string.Join(" <- ", parts);
+    }}
+
     [Start]
     public void Run()
     {{
         var results = new Dictionary<string, object>();
+        int bookmark = 0;
+        try
+        {{
+            using (var marker = new BaseException("MCP bookmark", MessageLevel.Message))
+            {{
+                bookmark = marker.GetBookmarkID();
+            }}
+        }}
+        catch {{}}
         try
         {{
             using (var qm = new QuietModeStep(QuietModes.ShowNoDialogs))
             {{
                 var acc = new ActionCallingContext();
                 {acc_parameters_code}
-                
-                var cli = new CommandLineInterpreter();
-                bool success = cli.Execute("{action_name}", acc);
+
+                bool legacyCli = {legacy_cli};
+                bool success;
+                Eplan.EplApi.ApplicationFramework.Action eplanAction = null;
+                if (!legacyCli)
+                {{
+                    try {{ eplanAction = new ActionManager().FindAction("{action_name}"); }}
+                    catch {{}}
+                }}
+                if (eplanAction != null)
+                {{
+                    results["executor"] = "action";
+                    success = eplanAction.Execute(acc);
+                }}
+                else
+                {{
+                    results["executor"] = legacyCli ? "cli-legacy" : "cli-fallback";
+                    var cli = new CommandLineInterpreter();
+                    success = cli.Execute("{action_name}", acc);
+                }}
                 results["success"] = success;
-                
+
                 var returnParams = new Dictionary<string, string>();
                 string[] checkKeys = new string[] {{ {check_keys_code} }};
                 foreach (var key in checkKeys)
@@ -357,9 +438,36 @@ public class QuietExecute_{exec_id}
         catch (Exception ex)
         {{
             results["success"] = false;
-            results["error"] = ex.Message;
+            results["error"] = ExceptionChain(ex);
+            results["errorType"] = ex.GetType().FullName;
         }}
-        
+
+        // Collect system messages emitted during this action (bookmark slice
+        // only - never the whole historical tree).
+        if (bookmark > 0)
+        {{
+            try
+            {{
+                var msgs = new List<string>();
+                var col = new SysMessagesCollection(bookmark, MessageLevel.Message);
+                var it = col.GetSysMsgEnumerator();
+                int guard = 0;
+                while (it.MoveNext() && guard++ < 20)
+                {{
+                    var m = it.Current;
+                    if (m != null && !string.IsNullOrEmpty(m.Message) && m.Message != "MCP bookmark")
+                    {{
+                        msgs.Add(m.Message);
+                    }}
+                }}
+                if (msgs.Count > 0)
+                {{
+                    results["eplanMessages"] = msgs;
+                }}
+            }}
+            catch {{}}
+        }}
+
         string json = Newtonsoft.Json.JsonConvert.SerializeObject(results);
         File.WriteAllText("{escaped_result_path}", json);
     }}
@@ -385,7 +493,9 @@ public class QuietExecute_{exec_id}
             start_time = time.time()
             while not os.path.exists(result_path):
                 if time.time() - start_time > timeout:
-                    return {"success": False, "message": "Timeout waiting for scripted action execution result"}
+                    result = {"success": False, "message": "Timeout waiting for scripted action execution result"}
+                    self._log_action(action, result, started)
+                    return result
                 time.sleep(0.1)
 
             # Read results
@@ -393,12 +503,15 @@ public class QuietExecute_{exec_id}
             with open(result_path, "r", encoding="utf-8") as f:
                 res_data = json.load(f)
 
+            self._log_action(action, res_data, started)
             return res_data
 
         except Exception as e:
             self.last_error = f"Scripted execution failed: {e}"
             logger.error(self.last_error)
-            return {"success": False, "message": self.last_error, "action": action}
+            result = {"success": False, "message": self.last_error, "action": action}
+            self._log_action(action, result, started)
+            return result
 
         finally:
             # Cleanup temp files

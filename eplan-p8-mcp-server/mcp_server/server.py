@@ -184,7 +184,7 @@ public class MCPTest
 # DYNAMIC ACTIONS REGISTRATION
 # ============================================================================
 
-def register_actions(actions_module):
+def register_actions(actions_module, prefix="eplan_"):
     """
     Dynamically registers all actions exported by the actions module.
     Wraps the functions to return formatted JSON.
@@ -197,7 +197,7 @@ def register_actions(actions_module):
         if not callable(func):
             continue
 
-        tool_name = f"eplan_{func_name}"
+        tool_name = f"{prefix}{func_name}"
 
         def make_wrapper(f):
             @functools.wraps(f)
@@ -218,6 +218,13 @@ def register_actions(actions_module):
 # Register all actions (executed inside a C# script under QuietMode)
 register_actions(eplan_actions)
 
+# AAS (Asset Administration Shell) tools - optional, needs basyx-python-sdk
+try:
+    import api.aas as aas_tools
+    register_actions(aas_tools, prefix="aas_")
+except ImportError as e:
+    print(f"AAS tools not available (pip install basyx-python-sdk): {e}", file=sys.stderr)
+
 
 # ============================================================================
 # MAIN
@@ -234,4 +241,16 @@ if __name__ == "__main__":
     print("-" * 40)
     print("All actions run as eplan_* (C# script under QuietMode)")
     print("-" * 40)
-    mcp.run()
+
+    # Transport selection: stdio (default) or streamable-http for running the
+    # server on the EPLAN machine and connecting from another machine
+    # (e.g. through an SSH tunnel). The server has no authentication of its
+    # own - only bind beyond localhost on a trusted network.
+    transport = os.environ.get("MCP_TRANSPORT", "stdio").lower()
+    if transport in ("http", "streamable-http", "streamable_http"):
+        mcp.settings.host = os.environ.get("MCP_HOST", "127.0.0.1")
+        mcp.settings.port = int(os.environ.get("MCP_PORT", "8321"))
+        print(f"Transport: streamable-http on {mcp.settings.host}:{mcp.settings.port}")
+        mcp.run(transport="streamable-http")
+    else:
+        mcp.run()
