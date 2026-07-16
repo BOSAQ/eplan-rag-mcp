@@ -253,11 +253,26 @@ if __name__ == "__main__":
     # server on the EPLAN machine and connecting from another machine
     # (e.g. through an SSH tunnel). The server has no authentication of its
     # own - only bind beyond localhost on a trusted network.
-    transport = os.environ.get("MCP_TRANSPORT", "stdio").lower()
-    if transport in ("http", "streamable-http", "streamable_http"):
+    _HTTP_TRANSPORTS = {"http", "streamable-http", "streamable_http"}
+    _STDIO_TRANSPORTS = {"stdio", ""}
+    transport = os.environ.get("MCP_TRANSPORT", "stdio").strip().lower()
+
+    if transport in _HTTP_TRANSPORTS:
+        raw_port = os.environ.get("MCP_PORT", "8321")
+        try:
+            port = int(raw_port)
+            if not (0 < port < 65536):
+                raise ValueError
+        except ValueError:
+            sys.exit(f"MCP_PORT must be an integer in 1..65535, got {raw_port!r}")
         mcp.settings.host = os.environ.get("MCP_HOST", "127.0.0.1")
-        mcp.settings.port = int(os.environ.get("MCP_PORT", "8321"))
+        mcp.settings.port = port
         print(f"Transport: streamable-http on {mcp.settings.host}:{mcp.settings.port}")
         mcp.run(transport="streamable-http")
-    else:
+    elif transport in _STDIO_TRANSPORTS:
         mcp.run()
+    else:
+        sys.exit(
+            f"Unknown MCP_TRANSPORT {transport!r}. "
+            f"Use 'stdio' (default) or 'http'/'streamable-http'."
+        )
