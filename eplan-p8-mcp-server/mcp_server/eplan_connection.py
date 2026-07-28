@@ -493,7 +493,10 @@ public class QuietExecute_{exec_id}
                 int guard = 0;
                 while (it.MoveNext() && guard++ < 20)
                 {{
-                    var m = it.Current;
+                    // SysMessagesEnumerator.Current is typed object - it must
+                    // be cast before .Message is reachable, or the generated
+                    // script fails to compile and every action breaks.
+                    var m = it.Current as BaseException;
                     if (m != null && !string.IsNullOrEmpty(m.Message) && m.Message != "MCP bookmark")
                     {{
                         msgs.Add(m.Message);
