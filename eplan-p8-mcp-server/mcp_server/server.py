@@ -184,7 +184,7 @@ public class MCPTest
 # DYNAMIC ACTIONS REGISTRATION
 # ============================================================================
 
-def register_actions(actions_module):
+def register_actions(actions_module, prefix="eplan_"):
     """
     Dynamically registers all actions exported by the actions module.
     Wraps the functions to return formatted JSON.
@@ -197,7 +197,7 @@ def register_actions(actions_module):
         if not callable(func):
             continue
 
-        tool_name = f"eplan_{func_name}"
+        tool_name = f"{prefix}{func_name}"
 
         def make_wrapper(f):
             @functools.wraps(f)
@@ -218,6 +218,20 @@ def register_actions(actions_module):
 # Register all actions (executed inside a C# script under QuietMode)
 register_actions(eplan_actions)
 
+# AAS (Asset Administration Shell) tools - optional, needs basyx-python-sdk.
+# Only a missing basyx dependency is treated as "optional"; any other import
+# error inside the package is a real bug and must surface loudly rather than
+# silently dropping the aas_* tools.
+try:
+    import api.aas as aas_tools
+    register_actions(aas_tools, prefix="aas_")
+except ModuleNotFoundError as e:
+    if e.name and e.name.split(".")[0] in ("basyx", "aas"):
+        print("AAS tools disabled: basyx-python-sdk not installed "
+              "(pip install basyx-python-sdk).", file=sys.stderr)
+    else:
+        raise
+
 
 # ============================================================================
 # MAIN
@@ -234,4 +248,31 @@ if __name__ == "__main__":
     print("-" * 40)
     print("All actions run as eplan_* (C# script under QuietMode)")
     print("-" * 40)
-    mcp.run()
+
+    # Transport selection: stdio (default) or streamable-http for running the
+    # server on the EPLAN machine and connecting from another machine
+    # (e.g. through an SSH tunnel). The server has no authentication of its
+    # own - only bind beyond localhost on a trusted network.
+    _HTTP_TRANSPORTS = {"http", "streamable-http", "streamable_http"}
+    _STDIO_TRANSPORTS = {"stdio", ""}
+    transport = os.environ.get("MCP_TRANSPORT", "stdio").strip().lower()
+
+    if transport in _HTTP_TRANSPORTS:
+        raw_port = os.environ.get("MCP_PORT", "8321")
+        try:
+            port = int(raw_port)
+            if not (0 < port < 65536):
+                raise ValueError
+        except ValueError:
+            sys.exit(f"MCP_PORT must be an integer in 1..65535, got {raw_port!r}")
+        mcp.settings.host = os.environ.get("MCP_HOST", "127.0.0.1")
+        mcp.settings.port = port
+        print(f"Transport: streamable-http on {mcp.settings.host}:{mcp.settings.port}")
+        mcp.run(transport="streamable-http")
+    elif transport in _STDIO_TRANSPORTS:
+        mcp.run()
+    else:
+        sys.exit(
+            f"Unknown MCP_TRANSPORT {transport!r}. "
+            f"Use 'stdio' (default) or 'http'/'streamable-http'."
+        )

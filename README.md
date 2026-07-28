@@ -42,9 +42,10 @@ Each sub-project has its own README with installation and usage details.
 ### Local EPLAN automation (P8)
 
 The local MCP server lets Claude drive a running EPLAN instance. It exposes
-**156 tools**: 7 connection/utility tools plus **149 EPLAN actions**
-(`eplan_*`), every one executed silently inside a C# script under QuietMode —
-no EPLAN dialog can block unattended runs.
+**166 tools**: 7 connection/utility tools, **155 EPLAN actions** (`eplan_*`,
+every one executed silently inside a C# script under QuietMode — no EPLAN
+dialog can block unattended runs), and **4 Asset Administration Shell tools**
+(`aas_*`) for AAS/AASX digital-twin export and import.
 
 The EPLAN version is **auto-detected**: the server scans
 `C:\Program Files\EPLAN\Platform` and targets the newest installed version.

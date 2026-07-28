@@ -19,6 +19,39 @@ from typing import Optional, List
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("EPLAN")
 
+
+def cs_escape(value) -> str:
+    """Escape a value for safe embedding inside a C# regular string literal ("...").
+
+    Handles backslash, double-quote, newlines/tabs and other control
+    characters. This is the single defense against C# injection and against
+    uncompilable scripts when action parameters, part numbers, setting
+    paths, or supplier-supplied values contain quotes/backslashes/newlines.
+    Returns the inner content only (no surrounding quotes).
+    """
+    if value is None:
+        return ""
+    out = []
+    for ch in str(value):
+        codepoint = ord(ch)
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\t":
+            out.append("\\t")
+        elif codepoint < 0x20 or codepoint in (0x85, 0x2028, 0x2029):
+            # Control chars, plus NEL/LS/PS which C# treats as line
+            # terminators even inside a regular string literal.
+            out.append("\\u%04x" % codepoint)
+        else:
+            out.append(ch)
+    return "".join(out)
+
 # Root folder of EPLAN installations. Override with the EPLAN_PLATFORM_ROOT
 # environment variable for non-standard install locations.
 PLATFORM_ROOT = os.environ.get("EPLAN_PLATFORM_ROOT", r"C:\Program Files\EPLAN\Platform")
@@ -256,6 +289,30 @@ class EPLANConnectionManager:
             self.connected = False
             return {"alive": False, "message": f"Ping failed: {e}"}
 
+    def _log_action(self, action: str, result: dict, started: float) -> None:
+        """Append one JSON line per executed action to logs/actions.jsonl.
+
+        Persistent trace of what the LLM did in EPLAN (Audit/TODO.md item 2):
+        survives the conversation and lets failures be correlated with what
+        the user saw on screen. Never raises.
+        """
+        try:
+            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+            os.makedirs(log_dir, exist_ok=True)
+            entry = {
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "action": action,
+                "duration_s": round(time.time() - started, 3),
+                "success": result.get("success"),
+            }
+            for key in ("executor", "error", "errorType", "eplanMessages", "message"):
+                if result.get(key):
+                    entry[key] = result[key]
+            with open(os.path.join(log_dir, "actions.jsonl"), "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
     def execute_action(self, action: str, quiet_mode: bool = False) -> dict:
         """
         Execute an EPLAN action.
@@ -267,6 +324,7 @@ class EPLANConnectionManager:
         if not self.connected or not self.client:
             return {"success": False, "message": "Not connected"}
 
+        started = time.time()
         try:
             # Parse the action name (first word before any space or '/')
             action_name_match = re.match(r'^([^\s/]+)', action)
@@ -279,7 +337,12 @@ class EPLANConnectionManager:
                 logger.info(f"Executing directly: {action}")
                 self.client.SynchronousMode = True
                 self.client.ExecuteAction(action)
-                return {"success": True, "message": f"Executed directly: {action}", "action": action}
+                result = {"success": True, "message": f"Executed directly: {action}", "action": action}
+                # Script plumbing (register/execute/unregister) is logged only
+                # as part of the wrapped action, not as separate entries.
+                if action_name_lower not in ("registerscript", "executescript", "unregisterscript"):
+                    self._log_action(action, result, started)
+                return result
 
             # Parse parameters
             params = {}
@@ -300,20 +363,176 @@ class EPLANConnectionManager:
             script_path = os.path.join(script_dir, f"exec_action_{exec_id}.cs")
             result_path = os.path.join(results_dir, f"exec_result_{exec_id}.json")
 
-            # C# parameters generation
+            # C# parameters generation. Keys are constrained to
+            # [a-zA-Z0-9_]+ by the parse regex above; values are cs_escape'd
+            # to prevent injection / uncompilable scripts.
             acc_parameters_code = ""
             check_keys = ["PROJECT", "PROJECTS", "PAGES", "LAYOUTSPACES", "PropertyValue", "value", "Value", "Result", "Output", "Success", "Count", "Error", "Message"]
             for key, val in params.items():
-                escaped_val = val.replace("\\", "\\\\").replace('"', '\\"')
-                acc_parameters_code += f'\n                acc.AddParameter("{key}", "{escaped_val}");'
+                acc_parameters_code += f'\n                acc.AddParameter("{key}", "{cs_escape(val)}");'
                 if key not in check_keys:
                     check_keys.append(key)
 
             check_keys_code = ", ".join([f'"{k}"' for k in check_keys])
             escaped_result_path = result_path.replace("\\", "\\\\")
+            escaped_action_name = cs_escape(action_name)
 
-            # C# Script Content
+            # Escape hatch: EPLAN_MCP_LEGACY_CLI=1 emits the original
+            # CommandLineInterpreter-only template (no FindAction, no message
+            # capture) as a known-good fallback in case the enhanced template
+            # fails to compile on some EPLAN version.
+            if os.environ.get("EPLAN_MCP_LEGACY_CLI") == "1":
+                script_content = self._legacy_script_content(
+                    exec_id, acc_parameters_code, check_keys_code,
+                    escaped_result_path, escaped_action_name,
+                )
+                with open(script_path, "w", encoding="utf-8") as f:
+                    f.write(script_content)
+                return self._run_generated_script(action, script_path, result_path, started)
+
+            # C# Script Content.
+            # Executor strategy (Audit/TODO.md item 1): resolve the action via
+            # ActionManager.FindAction and run Action.Execute, which lets real
+            # EPLAN exceptions propagate to our catch block — unlike
+            # CommandLineInterpreter.Execute, which swallows them and returns
+            # only false. CLI remains as fallback for unresolvable actions.
+            # A message-tree bookmark taken before execution captures the
+            # warnings/errors EPLAN emitted during the call even when no
+            # exception is thrown (covers unreliable success:false results).
             script_content = f"""using System;
+using System.IO;
+using System.Collections.Generic;
+using Eplan.EplApi.ApplicationFramework;
+using Eplan.EplApi.Base;
+using Eplan.EplApi.Scripting;
+
+public class QuietExecute_{exec_id}
+{{
+    private static string ExceptionChain(Exception ex)
+    {{
+        var parts = new List<string>();
+        while (ex != null)
+        {{
+            parts.Add(ex.Message);
+            ex = ex.InnerException;
+        }}
+        return string.Join(" <- ", parts);
+    }}
+
+    [Start]
+    public void Run()
+    {{
+        var results = new Dictionary<string, object>();
+        int bookmark = 0;
+        try
+        {{
+            using (var marker = new BaseException("MCP bookmark", MessageLevel.Message))
+            {{
+                bookmark = marker.GetBookmarkID();
+            }}
+        }}
+        catch {{}}
+        try
+        {{
+            using (var qm = new QuietModeStep(QuietModes.ShowNoDialogs))
+            {{
+                var acc = new ActionCallingContext();
+                {acc_parameters_code}
+
+                bool success;
+                Eplan.EplApi.ApplicationFramework.Action eplanAction = null;
+                try {{ eplanAction = new ActionManager().FindAction("{escaped_action_name}"); }}
+                catch {{}}
+                if (eplanAction != null)
+                {{
+                    results["executor"] = "action";
+                    success = eplanAction.Execute(acc);
+                }}
+                else
+                {{
+                    results["executor"] = "cli-fallback";
+                    var cli = new CommandLineInterpreter();
+                    success = cli.Execute("{escaped_action_name}", acc);
+                }}
+                results["success"] = success;
+
+                var returnParams = new Dictionary<string, string>();
+                string[] checkKeys = new string[] {{ {check_keys_code} }};
+                foreach (var key in checkKeys)
+                {{
+                    try
+                    {{
+                        string val = "";
+                        acc.GetParameter(key, ref val);
+                        if (!string.IsNullOrEmpty(val))
+                        {{
+                            returnParams[key] = val;
+                        }}
+                    }}
+                    catch {{}}
+                }}
+                results["parameters"] = returnParams;
+            }}
+        }}
+        catch (Exception ex)
+        {{
+            results["success"] = false;
+            results["error"] = ExceptionChain(ex);
+            results["errorType"] = ex.GetType().FullName;
+        }}
+
+        // Collect system messages emitted during this action (bookmark slice
+        // only - never the whole historical tree).
+        if (bookmark > 0)
+        {{
+            try
+            {{
+                var msgs = new List<string>();
+                var col = new SysMessagesCollection(bookmark, MessageLevel.Message);
+                var it = col.GetSysMsgEnumerator();
+                int guard = 0;
+                while (it.MoveNext() && guard++ < 20)
+                {{
+                    var m = it.Current;
+                    if (m != null && !string.IsNullOrEmpty(m.Message) && m.Message != "MCP bookmark")
+                    {{
+                        msgs.Add(m.Message);
+                    }}
+                }}
+                if (msgs.Count > 0)
+                {{
+                    results["eplanMessages"] = msgs;
+                }}
+            }}
+            catch {{}}
+        }}
+
+        string json = Newtonsoft.Json.JsonConvert.SerializeObject(results);
+        File.WriteAllText("{escaped_result_path}", json);
+    }}
+}}
+"""
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write(script_content)
+            return self._run_generated_script(action, script_path, result_path, started)
+
+        except Exception as e:
+            self.last_error = f"Scripted execution failed: {e}"
+            logger.error(self.last_error)
+            result = {"success": False, "message": self.last_error, "action": action}
+            self._log_action(action, result, started)
+            return result
+
+    def _legacy_script_content(self, exec_id, acc_parameters_code, check_keys_code,
+                               escaped_result_path, escaped_action_name) -> str:
+        """Original CommandLineInterpreter-only template (EPLAN_MCP_LEGACY_CLI=1).
+
+        Known-good fallback: no FindAction, no message-tree capture, so it
+        cannot be broken by a message-API mismatch on some EPLAN version.
+        It swallows EPLAN exceptions (returns only a bool) - the trade-off
+        the escape hatch accepts for maximum compatibility.
+        """
+        return f"""using System;
 using System.IO;
 using System.Collections.Generic;
 using Eplan.EplApi.ApplicationFramework;
@@ -331,11 +550,12 @@ public class QuietExecute_{exec_id}
             {{
                 var acc = new ActionCallingContext();
                 {acc_parameters_code}
-                
+
+                results["executor"] = "cli-legacy";
                 var cli = new CommandLineInterpreter();
-                bool success = cli.Execute("{action_name}", acc);
+                bool success = cli.Execute("{escaped_action_name}", acc);
                 results["success"] = success;
-                
+
                 var returnParams = new Dictionary<string, string>();
                 string[] checkKeys = new string[] {{ {check_keys_code} }};
                 foreach (var key in checkKeys)
@@ -359,57 +579,74 @@ public class QuietExecute_{exec_id}
             results["success"] = false;
             results["error"] = ex.Message;
         }}
-        
+
         string json = Newtonsoft.Json.JsonConvert.SerializeObject(results);
         File.WriteAllText("{escaped_result_path}", json);
     }}
 }}
 """
-            # Write script to disk
-            with open(script_path, "w", encoding="utf-8") as f:
-                f.write(script_content)
 
-            # Register script
-            logger.info(f"Wrapping action via script: {action_name} (exec_id={exec_id})")
+    def _run_generated_script(self, action, script_path, result_path, started) -> dict:
+        """Register, execute, await the result file, and clean up a generated script."""
+        try:
+            logger.info(f"Wrapping action via script: {action} (script={os.path.basename(script_path)})")
             reg_result = self.execute_action(f'RegisterScript /ScriptFile:"{script_path}"', quiet_mode=False)
             if not reg_result.get("success"):
-                return {"success": False, "message": f"Failed to register execution script: {reg_result.get('message')}"}
+                result = {"success": False, "message": f"Failed to register execution script: {reg_result.get('message')}"}
+                self._log_action(action, result, started)
+                return result
 
-            # Execute script
             exec_result = self.execute_action(f'ExecuteScript /ScriptFile:"{script_path}"', quiet_mode=False)
             if not exec_result.get("success"):
-                return {"success": False, "message": f"Failed to execute action via script: {exec_result.get('message')}"}
+                result = {"success": False, "message": f"Failed to execute action via script: {exec_result.get('message')}"}
+                self._log_action(action, result, started)
+                return result
 
             # Wait for result file
             timeout = 30.0
             start_time = time.time()
             while not os.path.exists(result_path):
                 if time.time() - start_time > timeout:
-                    return {"success": False, "message": "Timeout waiting for scripted action execution result"}
+                    result = {"success": False, "message": "Timeout waiting for scripted action execution result"}
+                    self._log_action(action, result, started)
+                    return result
                 time.sleep(0.1)
 
-            # Read results
-            time.sleep(0.05) # Small sleep to let OS release file lock
-            with open(result_path, "r", encoding="utf-8") as f:
-                res_data = json.load(f)
+            # Read results, tolerating a partially-written file (the C# writer
+            # is not atomic vs our existence probe).
+            res_data = None
+            for _ in range(10):
+                time.sleep(0.05)
+                try:
+                    with open(result_path, "r", encoding="utf-8") as f:
+                        res_data = json.load(f)
+                    break
+                except (json.JSONDecodeError, ValueError):
+                    continue
+            if res_data is None:
+                result = {"success": False, "message": "Could not parse action result file"}
+                self._log_action(action, result, started)
+                return result
 
+            self._log_action(action, res_data, started)
             return res_data
 
         except Exception as e:
             self.last_error = f"Scripted execution failed: {e}"
             logger.error(self.last_error)
-            return {"success": False, "message": self.last_error, "action": action}
+            result = {"success": False, "message": self.last_error, "action": action}
+            self._log_action(action, result, started)
+            return result
 
         finally:
-            # Cleanup temp files
             try:
-                if 'script_path' in locals() and os.path.exists(script_path):
+                if os.path.exists(script_path):
                     self.execute_action(f'UnregisterScript /ScriptFile:"{script_path}"', quiet_mode=False)
                     os.remove(script_path)
             except Exception:
                 pass
             try:
-                if 'result_path' in locals() and os.path.exists(result_path):
+                if os.path.exists(result_path):
                     os.remove(result_path)
             except Exception:
                 pass

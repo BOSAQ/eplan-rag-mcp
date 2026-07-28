@@ -31,6 +31,12 @@ def close_project() -> dict:
     Close the currently open project in EPLAN.
     Action: XPrjActionProjectClose
 
+    Note: XPrjActionProjectClose is an internal EPLAN action that does not
+    appear in the official docs (verified against the P8 docs RAG
+    2026-07-15); it is the community-established way to close the focused
+    project. If it ever stops resolving, the documented fallbacks are the
+    ProjectAction wrapper or Project.Close() via execute_custom_script.
+
     IMPORTANT: This runs under QuietMode, which suppresses EPLAN's other
     dialogs (not necessarily an "unsaved changes" prompt specifically).
     Never assume it is safe to close - always ask the user to confirm before

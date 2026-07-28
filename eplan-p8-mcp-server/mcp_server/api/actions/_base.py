@@ -18,7 +18,7 @@ if mcp_root not in sys.path:
 # Also insert the current folder's parent so 'from .project import ...' style works if needed
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from eplan_connection import get_manager
+from eplan_connection import get_manager, cs_escape  # noqa: F401  (cs_escape re-exported)
 
 
 class QuietManagerWrapper:

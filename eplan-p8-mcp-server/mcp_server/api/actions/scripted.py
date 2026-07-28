@@ -8,11 +8,25 @@ These actions access internal EPLAN APIs that aren't available via standard acti
 """
 
 import os
+import re
 import json
 import time
 import uuid
 from typing import List
-from ._base import _get_connected_manager
+from ._base import _get_connected_manager, cs_escape
+
+# A value used as a C# member/identifier (not inside a string literal) cannot
+# be escaped safely - it must be a real identifier. Reject anything else to
+# close the injection surface for filter_property etc.
+_CS_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _identifier_error(value: str, what: str) -> dict:
+    return {
+        "success": False,
+        "error": f"Invalid {what}: {value!r}. Must be a valid identifier "
+                 f"(letters, digits, underscore; not starting with a digit).",
+    }
 
 # Locate the mcp_server root (the directory containing eplan_connection.py) so
 # that generated scripts and results share a single location with
@@ -147,6 +161,13 @@ def parts_db_query(
     Returns:
         dict with parts list and count
     """
+    # limit is interpolated into the C# source outside any string literal, so
+    # it must be a real integer - anything else would be code injection.
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        return {"success": False, "error": f"Invalid limit: {limit!r}. Must be an integer."}
+
     if return_properties is None:
         return_properties = [
             "PartNr",
@@ -156,12 +177,14 @@ def parts_db_query(
             "ProductSubGroup",
         ]
 
-    props_array = ", ".join([f'"{p}"' for p in return_properties])
+    props_array = ", ".join([f'"{cs_escape(p)}"' for p in return_properties])
 
     filter_code = ""
     if filter_property and filter_value:
+        if not _CS_IDENTIFIER.match(filter_property):
+            return _identifier_error(filter_property, "filter_property")
         filter_code = f'''
-            .Where(p => p.{filter_property}?.ToString()?.Contains("{filter_value}") == true)'''
+            .Where(p => p.{filter_property}?.ToString()?.Contains("{cs_escape(filter_value)}") == true)'''
 
     script = f"""using System;
 using System.IO;
@@ -240,7 +263,9 @@ def parts_db_count(filter_property: str = None, filter_value: str = None) -> dic
     """
     filter_code = ""
     if filter_property and filter_value:
-        filter_code = f'.Where(p => p.{filter_property}?.ToString()?.Contains("{filter_value}") == true)'
+        if not _CS_IDENTIFIER.match(filter_property):
+            return _identifier_error(filter_property, "filter_property")
+        filter_code = f'.Where(p => p.{filter_property}?.ToString()?.Contains("{cs_escape(filter_value)}") == true)'
 
     script = f"""using System;
 using System.IO;
@@ -290,6 +315,7 @@ def parts_db_get_part(part_number: str) -> dict:
     Returns:
         dict with part details
     """
+    part_number_cs = cs_escape(part_number)
     script = f'''using System;
 using System.IO;
 using System.Linq;
@@ -309,7 +335,7 @@ public class PartsGet_{uuid.uuid4().hex[:6]}
             var mdParts = new MDPartsManagement();
             using (var db = mdParts.OpenDatabase())
             {{
-                var part = db.Parts.FirstOrDefault(p => p.PartNr == "{part_number}");
+                var part = db.Parts.FirstOrDefault(p => p.PartNr == "{part_number_cs}");
 
                 if (part != null)
                 {{
@@ -353,6 +379,102 @@ public class PartsGet_{uuid.uuid4().hex[:6]}
     return _execute_script(script)
 
 
+def parts_db_create(part_number: str, properties: dict = None) -> dict:
+    """
+    Create a new part in the parts database and optionally set properties.
+
+    Uses MDPartsDatabase.AddPart (verified in the P8 docs; throws if the
+    part already exists — this function reports that as an error instead of
+    silently updating; use parts_db_update for existing parts).
+
+    Args:
+        part_number: Part number of the new part (must not exist yet)
+        properties: Optional dict of raw parts-DB property names to string
+            values, e.g. {"ARTICLE_MANUFACTURER": "Siemens",
+            "ARTICLE_DESCR1": "Circuit breaker"}
+
+    Returns:
+        dict with success status and the properties that were set
+    """
+    part_number_cs = cs_escape(part_number)
+    # Property names/values go into parallel C# string arrays (each element
+    # cs_escape'd) and are applied at runtime via reflection with a single
+    # loop variable - never minted into C# identifiers, so an arbitrary
+    # property name cannot break or inject into the script.
+    items = list((properties or {}).items())
+    names_array = ", ".join(f'"{cs_escape(name)}"' for name, _ in items)
+    values_array = ", ".join(f'"{cs_escape(value)}"' for _, value in items)
+
+    script = f'''using System;
+using System.IO;
+using System.Linq;
+using System.Collections.Generic;
+using Eplan.EplApi.MasterData;
+using Eplan.EplApi.Scripting;
+
+public class PartsCreate_{uuid.uuid4().hex[:6]}
+{{
+    [Start]
+    public void Run()
+    {{
+        var results = new Dictionary<string, object>();
+        var setProps = new List<string>();
+        var failedProps = new List<string>();
+        string[] propNames = new string[] {{ {names_array} }};
+        string[] propValues = new string[] {{ {values_array} }};
+
+        try
+        {{
+            var mdParts = new MDPartsManagement();
+            using (var db = mdParts.OpenDatabase())
+            {{
+                var existing = db.Parts.FirstOrDefault(p => p.PartNr == "{part_number_cs}");
+                if (existing != null)
+                {{
+                    results["success"] = false;
+                    results["error"] = "Part already exists: {part_number_cs} (use parts_db_update)";
+                }}
+                else
+                {{
+                    var part = db.AddPart("{part_number_cs}");
+                    for (int i = 0; i < propNames.Length; i++)
+                    {{
+                        try
+                        {{
+                            var prop = part.Properties.GetType().GetProperty(propNames[i]);
+                            if (prop != null)
+                            {{
+                                prop.SetValue(part.Properties, propValues[i]);
+                                setProps.Add(propNames[i]);
+                            }}
+                            else
+                            {{
+                                failedProps.Add(propNames[i]);
+                            }}
+                        }}
+                        catch {{ failedProps.Add(propNames[i]); }}
+                    }}
+                    results["success"] = true;
+                    results["created"] = "{part_number_cs}";
+                    results["propertiesSet"] = setProps;
+                    if (failedProps.Count > 0) results["propertiesFailed"] = failedProps;
+                }}
+            }}
+        }}
+        catch (Exception ex)
+        {{
+            results["success"] = false;
+            results["error"] = ex.Message;
+        }}
+
+        string json = Newtonsoft.Json.JsonConvert.SerializeObject(results, Newtonsoft.Json.Formatting.Indented);
+        File.WriteAllText(@"{{{{RESULT_PATH}}}}", json);
+    }}
+}}
+'''
+    return _execute_script(script)
+
+
 def parts_db_update(part_number: str, property_name: str, property_value: str) -> dict:
     """
     Update a property on a part in the database.
@@ -365,6 +487,9 @@ def parts_db_update(part_number: str, property_name: str, property_value: str) -
     Returns:
         dict with success status
     """
+    part_number_cs = cs_escape(part_number)
+    property_name_cs = cs_escape(property_name)
+    property_value_cs = cs_escape(property_value)
     script = f'''using System;
 using System.IO;
 using System.Linq;
@@ -384,27 +509,27 @@ public class PartsUpdate_{uuid.uuid4().hex[:6]}
             var mdParts = new MDPartsManagement();
             using (var db = mdParts.OpenDatabase())
             {{
-                var part = db.Parts.FirstOrDefault(p => p.PartNr == "{part_number}");
+                var part = db.Parts.FirstOrDefault(p => p.PartNr == "{part_number_cs}");
 
                 if (part != null)
                 {{
-                    var prop = part.Properties.GetType().GetProperty("{property_name}");
+                    var prop = part.Properties.GetType().GetProperty("{property_name_cs}");
                     if (prop != null)
                     {{
-                        prop.SetValue(part.Properties, "{property_value}");
+                        prop.SetValue(part.Properties, "{property_value_cs}");
                         results["success"] = true;
                         results["updated"] = true;
                     }}
                     else
                     {{
                         results["success"] = false;
-                        results["error"] = "Property not found: {property_name}";
+                        results["error"] = "Property not found: {property_name_cs}";
                     }}
                 }}
                 else
                 {{
                     results["success"] = false;
-                    results["error"] = "Part not found: {part_number}";
+                    results["error"] = "Part not found: {part_number_cs}";
                 }}
             }}
         }}
@@ -500,7 +625,7 @@ public class SettingsGetStr_{uuid.uuid4().hex[:6]}
         try
         {{
             var settings = new Settings();
-            string value = settings.GetStringSetting("{setting_path}", {index});
+            string value = settings.GetStringSetting("{cs_escape(setting_path)}", {int(index)});
             results["success"] = true;
             results["value"] = value;
             results["type"] = "string";
@@ -547,7 +672,7 @@ public class SettingsSetStr_{uuid.uuid4().hex[:6]}
         try
         {{
             var settings = new Settings();
-            settings.SetStringSetting("{setting_path}", "{value}", {index});
+            settings.SetStringSetting("{cs_escape(setting_path)}", "{cs_escape(value)}", {int(index)});
             results["success"] = true;
         }}
         catch (Exception ex)
@@ -591,7 +716,7 @@ public class SettingsGetBool_{uuid.uuid4().hex[:6]}
         try
         {{
             var settings = new Settings();
-            bool value = settings.GetBoolSetting("{setting_path}", {index});
+            bool value = settings.GetBoolSetting("{cs_escape(setting_path)}", {int(index)});
             results["success"] = true;
             results["value"] = value;
             results["type"] = "bool";
@@ -639,7 +764,7 @@ public class SettingsSetBool_{uuid.uuid4().hex[:6]}
         try
         {{
             var settings = new Settings();
-            settings.SetBoolSetting("{setting_path}", {value_str}, {index});
+            settings.SetBoolSetting("{cs_escape(setting_path)}", {value_str}, {int(index)});
             results["success"] = true;
         }}
         catch (Exception ex)
@@ -683,7 +808,7 @@ public class SettingsGetInt_{uuid.uuid4().hex[:6]}
         try
         {{
             var settings = new Settings();
-            int value = settings.GetNumericSetting("{setting_path}", {index});
+            int value = settings.GetNumericSetting("{cs_escape(setting_path)}", {int(index)});
             results["success"] = true;
             results["value"] = value;
             results["type"] = "int";
@@ -730,7 +855,7 @@ public class SettingsSetInt_{uuid.uuid4().hex[:6]}
         try
         {{
             var settings = new Settings();
-            settings.SetNumericSetting("{setting_path}", {value}, {index});
+            settings.SetNumericSetting("{cs_escape(setting_path)}", {int(value)}, {int(index)});
             results["success"] = true;
         }}
         catch (Exception ex)
@@ -774,7 +899,7 @@ public class SettingsGetDbl_{uuid.uuid4().hex[:6]}
         try
         {{
             var settings = new Settings();
-            double value = settings.GetDoubleSetting("{setting_path}", {index});
+            double value = settings.GetDoubleSetting("{cs_escape(setting_path)}", {int(index)});
             results["success"] = true;
             results["value"] = value;
             results["type"] = "double";
@@ -821,7 +946,7 @@ public class SettingsSetDbl_{uuid.uuid4().hex[:6]}
         try
         {{
             var settings = new Settings();
-            settings.SetDoubleSetting("{setting_path}", {value}, {index});
+            settings.SetDoubleSetting("{cs_escape(setting_path)}", {float(value)}, {int(index)});
             results["success"] = true;
         }}
         catch (Exception ex)
@@ -861,8 +986,10 @@ def pathmap_substitute(path_with_variables: str) -> dict:
     Returns:
         dict with substituted path
     """
-    # Escape the path for C# string
-    escaped_path = path_with_variables.replace("\\", "\\\\")
+    # Escape for a C# regular string literal (NOT verbatim - a verbatim
+    # literal would double backslashes into the path and leave quotes able
+    # to break out).
+    escaped_path = cs_escape(path_with_variables)
 
     script = f'''using System;
 using System.IO;
@@ -879,9 +1006,9 @@ public class PathMap_{uuid.uuid4().hex[:6]}
 
         try
         {{
-            string substituted = PathMap.SubstitutePath(@"{escaped_path}");
+            string substituted = PathMap.SubstitutePath("{escaped_path}");
             results["success"] = true;
-            results["original"] = @"{escaped_path}";
+            results["original"] = "{escaped_path}";
             results["substituted"] = substituted;
         }}
         catch (Exception ex)

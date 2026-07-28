@@ -2,8 +2,8 @@
 
 Checked **86** unique EPLAN actions against the official docs RAG (`https://rag2026.covaga.xyz/search`).
 
-- OK: 47
-- Action found but some parameter names not in the doc page: 37
+- OK: 48
+- Action found but some parameter names not in the doc page: 36
 - Action NOT found in docs: 2
 - Request errors: 0
 
@@ -16,7 +16,6 @@ Checked **86** unique EPLAN actions against the official docs RAG (`https://rag2
 | WARN | `ExportSegmentsTemplate` | `cabinet.export_segments_template` | params not seen in docs: ['EXPORTFILE'] [doc](https://www.eplan.help/en-us/Infoportal/Content/api/2026/ExportSegmentsTemplate.html) |
 | WARN | `ImportPrePlanningData` | `cabinet.import_preplanning_data` | params not seen in docs: ['IMPORTFILE'] [doc](https://www.eplan.help/en-us/Infoportal/Content/api/2026/ImportPrePlanningData.html) |
 | WARN | `ImportSegmentsTemplate` | `cabinet.import_segments_template` | params not seen in docs: ['IMPORTFILE'] [doc](https://www.eplan.help/en-us/Infoportal/Content/api/2026/ImportSegmentsTemplate.html) |
-| WARN | `SetProjectLanguage` | `project.set_project_language` | params not seen in docs: ['READWRITE'] [doc](https://www.eplan.help/en-us/Infoportal/Content/api/2026/SetProjectLanguage.html) |
 | WARN | `XEsUserPropertiesExportAction` | `properties.export_user_properties` | params not seen in docs: ['EXPORTFILE', 'PROJECTNAME'] [doc](https://www.eplan.help/en-us/Infoportal/Content/api/2026/XEsUserPropertiesExportAction.html) |
 | WARN | `XEsUserPropertiesImportAction` | `properties.import_user_properties` | params not seen in docs: ['IMPORTFILE', 'PROJECTNAME'] [doc](https://www.eplan.help/en-us/Infoportal/Content/api/2026/XEsUserPropertiesImportAction.html) |
 | WARN | `XMActionDCCommonExport` | `data_exchange.dc_export` | params not seen in docs: ['DESTINATION', 'EXECUTIONMODE', 'IMMEDIATEIMPORT'] [doc](https://www.eplan.help/en-us/Infoportal/Content/api/2026/XMActionDCCommonExport.html) |
@@ -57,6 +56,7 @@ Checked **86** unique EPLAN actions against the official docs RAG (`https://rag2
 | OK | `OpenWorkspaceAction` | `workspace.open_workspace` | [doc](https://www.eplan.help/en-us/Infoportal/Content/api/2026/OpenWorkspaceAction.html) |
 | OK | `RegisterScript` | `scripts.register_script` | [doc](https://www.eplan.help/en-us/Infoportal/Content/api/2026/RegisterScript.html) |
 | OK | `SaveWorkspaceAction` | `workspace.save_workspace` | [doc](https://www.eplan.help/en-us/Infoportal/Content/api/2026/SaveWorkspaceAction.html) |
+| OK | `SetProjectLanguage` | `project.set_project_language` | [doc](https://www.eplan.help/en-us/Infoportal/Content/api/2026/SetProjectLanguage.html) |
 | OK | `SwitchProjectType` | `project.switch_project_type` | [doc](https://www.eplan.help/en-us/Infoportal/Content/api/2026/SwitchProjectType.html) |
 | OK | `Topology` | `cabinet.topology_operation` | [doc](https://www.eplan.help/en-us/Infoportal/Content/api/2026/Topology.html) |
 | OK | `UnregisterScript` | `scripts.unregister_script` | [doc](https://www.eplan.help/en-us/Infoportal/Content/api/2026/UnregisterScript.html) |

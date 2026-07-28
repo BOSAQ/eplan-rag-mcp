@@ -1,9 +1,12 @@
 # EPLAN MCP Server Dependencies
 
-# MCP SDK
-mcp>=0.1.0
+# MCP SDK (>=1.8.0 for the streamable-http transport used by MCP_TRANSPORT=http)
+mcp>=1.8.0
 
 # .NET interop for EPLAN API
 pythonnet>=3.0.0
+
+# Asset Administration Shell (aas_* tools): AAS metamodel V3 + AASX packaging
+basyx-python-sdk>=2.0.1
 
 

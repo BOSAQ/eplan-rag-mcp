@@ -262,6 +262,7 @@ from .scripted import (
     parts_db_query,
     parts_db_count,
     parts_db_get_part,
+    parts_db_create,
     parts_db_update,
     parts_db_list_product_groups,
     # Settings API (typed)
@@ -278,6 +279,15 @@ from .scripted import (
     pathmap_get_common_paths,
     # Custom scripts
     execute_custom_script,
+)
+
+# Discovery (enumerate real EPLAN catalogs instead of guessing)
+from .discovery import (
+    settings_list_children,
+    list_schemes,
+    list_report_templates,
+    list_layers,
+    list_enums,
 )
 
 # Re-export base utilities for advanced usage
@@ -364,8 +374,8 @@ __all__ = [
     # Add-ons
     'load_api_module', 'register_addon', 'unregister_addon', 'execute_raw_action',
     # Scripted - Parts database
-    'parts_db_query', 'parts_db_count', 'parts_db_get_part', 'parts_db_update',
-    'parts_db_list_product_groups',
+    'parts_db_query', 'parts_db_count', 'parts_db_get_part', 'parts_db_create',
+    'parts_db_update', 'parts_db_list_product_groups',
     # Scripted - Settings API
     'settings_get_string', 'settings_set_string', 'settings_get_bool', 'settings_set_bool',
     'settings_get_int', 'settings_set_int', 'settings_get_double', 'settings_set_double',
@@ -373,6 +383,9 @@ __all__ = [
     'pathmap_substitute', 'pathmap_get_common_paths',
     # Scripted - Custom
     'execute_custom_script',
+    # Discovery
+    'settings_list_children', 'list_schemes', 'list_report_templates',
+    'list_layers', 'list_enums',
     # Base
     '_get_connected_manager', '_build_action',
 ]
