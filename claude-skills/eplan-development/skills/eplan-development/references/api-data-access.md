@@ -1,6 +1,15 @@
 # API Data Access (Parts Database, Properties)
 
-Some `Eplan.EplApi.*` API namespaces work directly inside scripts (no separate add-in needed): notably `Eplan.EplApi.MasterData` for the parts database. Full project object-model work (placements, functions, connections via `Eplan.EplApi.DataModel`) requires an API license and usually a proper API project — verify signatures against the RAG.
+Some `Eplan.EplApi.*` API namespaces work directly inside scripts (no separate add-in needed): notably `Eplan.EplApi.MasterData` for the parts database.
+
+> **Important correction (documented 2026-08):** `using Eplan.EplApi.DataModel;` /
+> `using Eplan.EplApi.HEServices;` do **NOT** compile inside the EPLAN script
+> engine (CS0234 — the engine references a fixed assembly set). However, the
+> full object model IS reachable at **runtime** via
+> `Assembly.Load("Eplan.EplApi.DataModelu")` + reflection, which requires no
+> API project and no additional license. See
+> `e3d-installation-spaces.md` for the working recipe (LockingStep +
+> SelectionSet + InstallationSpace.Create).
 
 ## Parts database (`MDPartsManagement`)
 
@@ -64,14 +73,14 @@ for (int i = 1; i <= 20; i++)
 
 ## User-defined properties on parts
 
-User-defined properties live on the part as `UserDefinedPropertyPositions`; each position has `IdentifyingName` (e.g. `"MYCOMPANY.P001"`) and `Value` (multilang string):
+User-defined properties live on the part as `UserDefinedPropertyPositions`; each position has `IdentifyingName` (e.g. `"MLX.P025"`) and `Value` (multilang string):
 
 ```csharp
 foreach (var pos in part.UserDefinedPropertyPositions)
 {
     if (pos == null) continue;
     string ident = pos.IdentifyingName ?? "";
-    if (ident.Equals("MYCOMPANY.P001", StringComparison.OrdinalIgnoreCase))
+    if (ident.Equals("MLX.P025", StringComparison.OrdinalIgnoreCase))
     {
         var v = pos.Value;
         if (v != null) myValue = ParseMultiLang(v.ToString());
@@ -85,4 +94,4 @@ foreach (var pos in part.UserDefinedPropertyPositions)
 - Materialize `database.Parts` into a `List<MDPart>` first if you need a count for a progress bar.
 - Document paths from the parts DB frequently contain PathMap variables (`$(MD_DOCUMENTS)\...`) — always resolve with `PathMap.SubstitutePath` before using as a filesystem path, and skip `http(s)://` URLs when expecting files.
 - Report progress/results with `new BaseException(msg, MessageLevel.Message).FixMessage()` so runs are traceable in EPLAN's message list.
-- For project data (pages, devices, functions): prefer **actions** from scripts (`selectionset`, `edit`, property actions — see actions-reference.md). Reserve `Eplan.EplApi.DataModel` for licensed API projects, and check exact class/method names in the RAG before writing code.
+- For project data (pages, devices, functions): prefer **actions** from scripts (`selectionset`, `edit`, property actions — see actions-reference.md). When an action cannot do the job (e.g. creating installation spaces headless), reach the object model via runtime reflection on the loaded assemblies (see `e3d-installation-spaces.md`), not via `using Eplan.EplApi.DataModel;` — that reference fails to compile.
