@@ -156,6 +156,12 @@ from .scripts import (
     execute_script,
 )
 
+# E3D / 3D layout spaces
+from .e3d import (
+    create_installation_space,
+    insert_3d_macro,
+)
+
 # Settings
 from .settings import (
     export_settings,
@@ -342,6 +348,8 @@ __all__ = [
     'generate_macros', 'prepare_macros', 'update_macros',
     # Scripts
     'register_script', 'unregister_script', 'execute_script',
+    # E3D / 3D layout spaces
+    'create_installation_space', 'insert_3d_macro',
     # Settings
     'export_settings', 'import_settings', 'set_setting', 'set_project_setting',
     # Properties
