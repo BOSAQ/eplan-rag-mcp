@@ -199,3 +199,36 @@ def test_ambiguous_match_guard_present(capture):
     assert "DeclaredOnly" in cs
     assert "Type.EmptyTypes" in cs
     assert 'GetPropInfo(props.GetType(), "FUNC_TEXT")' in cs
+
+
+# ---------------------------------------------------------------------------
+# discovery.list_layers reaches the DataModel through the same reflection
+# scaffold. Emitting `using Eplan.EplApi.DataModel;` is CS0234, which means the
+# script never compiles, never writes its result file, and the tool can only
+# ever time out - so guard the using-directive absence here too.
+# ---------------------------------------------------------------------------
+
+def test_list_layers_uses_reflection_not_using_directive(monkeypatch):
+    from api.actions import discovery
+
+    captured = {}
+
+    def fake_execute(script, timeout=30.0):
+        captured["script"] = script
+        captured["timeout"] = timeout
+        return {"success": True, "results": {"stubbed": True}}
+
+    monkeypatch.setattr(discovery, "_execute_script", fake_execute)
+    discovery.list_layers()
+
+    cs = captured["script"]
+    for line in cs.splitlines():
+        if line.strip().startswith("using "):
+            assert "Eplan.EplApi.DataModel" not in line
+            assert "Eplan.EplApi.HEServices" not in line
+    # goes through the shared reflection scaffold
+    assert "AppDomain.CurrentDomain.GetAssemblies()" in cs
+    assert 'FindType("Eplan.EplApi.DataModel.LockingStep")' in cs
+    assert 'GetPropInfo(project.GetType(), "LayerTable")' in cs
+    # a 457-layer table needs more headroom than the 30s default
+    assert captured["timeout"] > 30.0
