@@ -90,11 +90,40 @@ _HELPERS = '''
         return value.IndexOf(contains, StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
+    // Type.GetProperty(name) is NOT safe on EPLAN types - it throws
+    // AmbiguousMatchException for two independent reasons:
+    //  1. A derived class re-declares a member with a narrower return type
+    //     (Function.Properties returns FunctionPropertyList, the base returns
+    //     PropertyList), so the name exists at two levels of the hierarchy.
+    //  2. A property list declares BOTH a plain and an indexed form of the same
+    //     property on the SAME type (FUNC_TEXT and FUNC_TEXT[int]).
+    // So: walk from the most-derived type up, DeclaredOnly (fixes 1), and ask
+    // for the non-indexed declaration via Type.EmptyTypes (fixes 2) - together
+    // that is what C# member lookup would have picked.
+    static PropertyInfo GetPropInfo(Type t, string name)
+    {
+        BindingFlags bf = BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+        Type cur = t;
+        while (cur != null)
+        {
+            PropertyInfo pi = null;
+            try { pi = cur.GetProperty(name, bf, null, null, Type.EmptyTypes, null); }
+            catch { }
+            if (pi != null) return pi;
+            // No non-indexed form here; accept a unique declaration of any shape.
+            try { pi = cur.GetProperty(name, bf); }
+            catch { pi = null; }
+            if (pi != null) return pi;
+            cur = cur.BaseType;
+        }
+        return null;
+    }
+
     static string PropText(object o, string prop)
     {
         try
         {
-            PropertyInfo pi = o.GetType().GetProperty(prop);
+            PropertyInfo pi = GetPropInfo(o.GetType(), prop);
             if (pi == null) return null;
             object v = pi.GetValue(o, null);
             if (v == null) return null;
@@ -229,6 +258,13 @@ def live_query_functions(contains: str = None, limit: int = 100,
     Returns:
         dict with "functions" (list of {"name": ...}), "matched", "returned".
     """
+    # limit is interpolated into the C# source outside any string literal, so
+    # it must be a real integer - anything else would be code injection.
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        return {"success": False, "error": f"Invalid limit: {limit!r}. Must be an integer."}
+
     body = _FINDER + '''            Type filterType = FindType("Eplan.EplApi.DataModel.FunctionsFilter");
             object filter = Activator.CreateInstance(filterType);
             MethodInfo getFunctions = finderType.GetMethod("GetFunctions", new Type[] { filterType });
@@ -278,6 +314,13 @@ def live_query_pages(contains: str = None, limit: int = 100,
         dict with "pages" (list of {"name": ..., "pageType": ...}),
         "matched", "returned".
     """
+    # limit is interpolated into the C# source outside any string literal, so
+    # it must be a real integer - anything else would be code injection.
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        return {"success": False, "error": f"Invalid limit: {limit!r}. Must be an integer."}
+
     body = _FINDER + '''            Type filterType = FindType("Eplan.EplApi.DataModel.PagesFilter");
             object filter = Activator.CreateInstance(filterType);
             MethodInfo getPages = finderType.GetMethod("GetPages", new Type[] { filterType });
@@ -337,11 +380,21 @@ def live_set_function_text(name: str, text: str, limit: int = 1,
         {"name", "previous", "new"}).
 
     Note:
-        FUNC_TEXT is a multi-language property. "previous" is EPLAN's internal
-        MultiLangString encoding (language markers + text), not clean display
-        text - a faithful but opaque snapshot, good for detecting "was empty"
-        and for restoring, less so for reading.
+        FUNC_TEXT (property 20011) is backed by MultiLangString. "previous" is
+        EPLAN's internal MultiLangString encoding (language markers + text), not
+        clean display text - a faithful but opaque snapshot, good for detecting
+        "was empty", less so for reading. Beware round-tripping it: writing a
+        plain string stores it under the "no language set" key, so a value read
+        back can carry a literal "??_??@" prefix. Restoring an empty value is
+        clean; restoring a previously-set one may need that prefix stripped.
     """
+    # limit is interpolated into the C# source outside any string literal, so
+    # it must be a real integer - anything else would be code injection.
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        return {"success": False, "error": f"Invalid limit: {limit!r}. Must be an integer."}
+
     if not name:
         return {"success": False, "message": "name is required"}
 
@@ -349,26 +402,6 @@ def live_set_function_text(name: str, text: str, limit: int = 1,
             object filter = Activator.CreateInstance(filterType);
             MethodInfo getFunctions = finderType.GetMethod("GetFunctions", new Type[] { filterType });
             IEnumerable found = (IEnumerable)getFunctions.Invoke(finder, new object[] { filter });
-
-            // Properties.Function.FUNC_TEXT is a static member of the nested
-            // type Eplan.EplApi.DataModel.Properties+Function; its value is the
-            // PropertyIdentifier the Properties indexer expects.
-            Type propsFunc = FindType("Eplan.EplApi.DataModel.Properties+Function");
-            if (propsFunc == null)
-                throw new Exception("Could not resolve Eplan.EplApi.DataModel.Properties+Function.");
-            object funcTextId = null;
-            PropertyInfo ftProp = propsFunc.GetProperty("FUNC_TEXT", BindingFlags.Public | BindingFlags.Static);
-            if (ftProp != null)
-            {
-                funcTextId = ftProp.GetValue(null, null);
-            }
-            else
-            {
-                FieldInfo ftField = propsFunc.GetField("FUNC_TEXT", BindingFlags.Public | BindingFlags.Static);
-                if (ftField == null)
-                    throw new Exception("FUNC_TEXT is neither a static property nor a static field.");
-                funcTextId = ftField.GetValue(null);
-            }
 
             string targetName = "''' + cs_escape(name) + '''";
             string newText = "''' + cs_escape(text or "") + '''";
@@ -384,17 +417,26 @@ def live_set_function_text(name: str, text: str, limit: int = 1,
                 matched++;
                 if (details.Count >= ''' + str(int(limit)) + ''') continue;
 
-                // fn.Properties[FUNC_TEXT] -> PropertyValue; .Set(string) writes.
-                object props = fn.GetType().GetProperty("Properties").GetValue(fn, null);
-                PropertyInfo indexer = props.GetType().GetProperty("Item", new Type[] { funcTextId.GetType() });
-                if (indexer == null)
-                    throw new Exception("No Properties indexer accepting " + funcTextId.GetType().FullName);
-                object pv = indexer.GetValue(props, new object[] { funcTextId });
+                // fn.Properties is a FunctionPropertyList, which exposes
+                // FUNC_TEXT (function text, property 20011) directly as a
+                // PropertyValue. Per the PropertyValue.Set docs, a PropertyValue
+                // "accrued from property list or from StorableObject" writes
+                // through to the original location on Set() - so no indexer and
+                // no PropertyIdentifier plumbing is needed.
+                PropertyInfo propsProp = GetPropInfo(fn.GetType(), "Properties");
+                if (propsProp == null)
+                    throw new Exception("Function has no Properties member.");
+                object props = propsProp.GetValue(fn, null);
+                PropertyInfo ftProp = GetPropInfo(props.GetType(), "FUNC_TEXT");
+                if (ftProp == null)
+                    throw new Exception("Property list " + props.GetType().FullName +
+                        " has no FUNC_TEXT property.");
+                object pv = ftProp.GetValue(props, null);
 
                 string previous = "";
                 try
                 {
-                    PropertyInfo isEmpty = pv.GetType().GetProperty("IsEmpty");
+                    PropertyInfo isEmpty = GetPropInfo(pv.GetType(), "IsEmpty");
                     bool empty = isEmpty != null && (bool)isEmpty.GetValue(pv, null);
                     if (!empty) previous = pv.ToString();
                 }
