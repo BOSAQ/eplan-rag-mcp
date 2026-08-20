@@ -296,6 +296,13 @@ from .discovery import (
     list_enums,
 )
 
+# Live DataModel (read/edit the project open in EPLAN, via runtime reflection)
+from .live import (
+    live_query_functions,
+    live_query_pages,
+    live_set_function_text,
+)
+
 # Re-export base utilities for advanced usage
 from ._base import (
     _get_connected_manager,
@@ -394,6 +401,8 @@ __all__ = [
     # Discovery
     'settings_list_children', 'list_schemes', 'list_report_templates',
     'list_layers', 'list_enums',
+    # Live DataModel
+    'live_query_functions', 'live_query_pages', 'live_set_function_text',
     # Base
     '_get_connected_manager', '_build_action',
 ]
