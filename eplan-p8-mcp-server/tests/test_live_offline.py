@@ -36,6 +36,8 @@ ALL_TOOLS = [
     (live.live_query_functions, {}),
     (live.live_query_pages, {}),
     (live.live_set_function_text, {"name": "+X-K1", "text": "hi"}),
+    (live.live_set_connection_designations,
+     {"name": "+X-K1", "designations": ["Y11", "Y12"]}),
 ]
 
 
@@ -232,3 +234,85 @@ def test_list_layers_uses_reflection_not_using_directive(monkeypatch):
     assert 'GetPropInfo(project.GetType(), "LayerTable")' in cs
     # a 457-layer table needs more headroom than the 30s default
     assert captured["timeout"] > 30.0
+
+
+# ---------------------------------------------------------------------------
+# live_set_connection_designations - connection point numbers (property 20022)
+# ---------------------------------------------------------------------------
+
+def test_conn_designations_writes_each_index_in_order(capture):
+    live.live_set_connection_designations("+-TEST", ["Y11", "Y12"])
+    cs = capture["script"]
+    # one designation per index, in the order given
+    assert 'string[] wanted = new string[] { "Y11", "Y12" };' in cs
+    # and they are written by slot, not as one joined blob
+    assert "int slot = i + 1;" in cs
+
+
+def test_conn_designations_uses_indexed_property_lookup(capture):
+    # FUNC_CONNECTIONDESIGNATION is declared both plain and [int]; the indexed
+    # form is the one that addresses a single connection point. Using the
+    # non-indexed lookup here would fetch the wrong declaration.
+    live.live_set_connection_designations("+-TEST", ["Y11"])
+    cs = capture["script"]
+    assert 'GetPropInfoIdx(props.GetType(), "FUNC_CONNECTIONDESIGNATION")' in cs
+    assert "new Type[] { typeof(int) }" in cs
+
+
+def test_conn_designations_reads_back_each_slot(capture):
+    # The reported value must come from a fresh fetch, not the local wrapper.
+    live.live_set_connection_designations("+-TEST", ["Y11", "Y12"])
+    cs = capture["script"]
+    assert cs.count("cdIdx.GetValue(props, new object[] { slot })") >= 2
+
+
+def test_conn_designations_rejects_joined_string(capture):
+    # "Y11¶Y12" as one value would land entirely in index 1.
+    result = live.live_set_connection_designations("+-TEST", "Y11" + live.PILCROW + "Y12")
+    assert result["success"] is False
+    assert "list of strings" in result["error"]
+    assert "script" not in capture
+
+
+def test_conn_designations_rejects_pilcrow_inside_an_element(capture):
+    result = live.live_set_connection_designations("+-TEST", ["Y11" + live.PILCROW + "Y12"])
+    assert result["success"] is False
+    assert "pilcrow" in result["error"]
+    assert "script" not in capture
+
+
+@pytest.mark.parametrize("bad", [[], None, 42, {}])
+def test_conn_designations_rejects_bad_container(capture, bad):
+    result = live.live_set_connection_designations("+-TEST", bad)
+    assert result["success"] is False
+    assert "script" not in capture
+
+
+def test_conn_designations_rejects_none_element(capture):
+    result = live.live_set_connection_designations("+-TEST", ["Y11", None])
+    assert result["success"] is False
+    assert "None" in result["error"]
+    assert "script" not in capture
+
+
+def test_conn_designations_requires_name(capture):
+    result = live.live_set_connection_designations("", ["Y11"])
+    assert result["success"] is False
+    assert "script" not in capture
+
+
+def test_conn_designations_default_limit_is_one(capture):
+    live.live_set_connection_designations("+-TEST", ["Y11"])
+    assert "details.Count >= 1" in capture["script"]
+
+
+def test_conn_designations_coerces_non_string_elements(capture):
+    live.live_set_connection_designations("+-TEST", [11, 12])
+    assert 'new string[] { "11", "12" };' in capture["script"]
+
+
+def test_conn_designations_escapes_injection(capture):
+    live.live_set_connection_designations("+-TEST", [INJECTION, "Y12"])
+    cs = capture["script"]
+    assert _string_literals_balanced(cs)
+    assert '"' + INJECTION not in cs

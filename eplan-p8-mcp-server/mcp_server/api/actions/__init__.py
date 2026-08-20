@@ -301,6 +301,7 @@ from .live import (
     live_query_functions,
     live_query_pages,
     live_set_function_text,
+    live_set_connection_designations,
 )
 
 # Re-export base utilities for advanced usage
@@ -403,6 +404,7 @@ __all__ = [
     'list_layers', 'list_enums',
     # Live DataModel
     'live_query_functions', 'live_query_pages', 'live_set_function_text',
+    'live_set_connection_designations',
     # Base
     '_get_connected_manager', '_build_action',
 ]
