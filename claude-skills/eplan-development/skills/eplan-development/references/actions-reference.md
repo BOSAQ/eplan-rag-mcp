@@ -1,6 +1,6 @@
 # Executing Actions
 
-Actions are EPLAN's command surface — nearly everything the UI does is an action. If you're unsure of a name or parameter, **query the RAG first** (`POST https://rag2026.covaga.xyz/search`), including "hidden actions" not in the official docs.
+Actions are EPLAN's command surface — nearly everything the UI does is an action. If you're unsure of a name or parameter, **query the RAG first** — action names/parameters are exact identifiers, so try `POST https://rag2027.covaga.xyz/search` (keyword/FTS5) before `rag2026.covaga.xyz` (semantic) — including "hidden actions" not in the official docs.
 
 ## Basic execution
 

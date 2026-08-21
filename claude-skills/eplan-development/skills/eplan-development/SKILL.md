@@ -30,16 +30,30 @@ Note: scripts CAN use some API namespaces (e.g. `Eplan.EplApi.MasterData` for th
 
 ## When you don't know something: query the RAG
 
-A semantic search service indexes the full EPLAN P8 documentation (API reference, user guide, hidden/undocumented actions — ~57k vectors). **Always query it before guessing** action names, parameters, or API signatures:
+Two remote search services, indexing different doc releases with different
+search modes — **always query one before guessing** action names, parameters,
+or API signatures:
 
 ```bash
+# rag2027: EPLAN 2027 docs, keyword/full-text search (SQLite FTS5 + bm25).
+# Try this FIRST for anything with a real or guessable exact name -- an
+# action name, a class/method/property, an error code. Measured head-to-head
+# against rag2026 on real queries: FTS5 wins that case because it doesn't
+# fragment a page into disconnected chunks the way the embedding index does.
+curl -X POST https://rag2027.covaga.xyz/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "FindAction", "topK": 5}'
+
+# rag2026: EPLAN 2026 docs, semantic search (Vectorize + bge-base, ~57k
+# vectors). Use when the query shares no real vocabulary with the docs at
+# all -- e.g. describing a UI behavior without knowing what it's called.
 curl -X POST https://rag2026.covaga.xyz/search \
   -H "Content-Type: application/json" \
   -d '{"query": "export project to PDF parameters", "topK": 5}'
 ```
 
-- `POST /search` — body `{"query": "...", "topK": N}` (public, no auth)
-- `GET /stats` — index statistics; `GET /health` — health check
+- `POST /search` — body `{"query": "...", "topK": N}` (public, no auth) — same shape on both
+- `GET /stats` — index statistics; `GET /health` — health check — same shape on both
 
 Use natural-language queries in English ("action to renumber devices", "PagePropertyList page type values"). Prefer several narrow queries over one broad one.
 

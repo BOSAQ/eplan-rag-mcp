@@ -51,7 +51,8 @@ Restart Claude Code (or start a new session). The skill activates automatically 
 ## Pairs well with
 
 - **[eplan-p8-mcp-server](../../eplan-p8-mcp-server/)** — lets Claude *execute* EPLAN actions live; this skill teaches it to write correct code and avoid the traps.
-- **[cloudflare-rag-eplan-p8](../../cloudflare-rag-eplan-p8/)** — semantic search over the EPLAN P8 docs; the skill tells Claude to consult it before guessing action names/parameters (`POST https://rag2026.covaga.xyz/search`).
+- **[cloudflare-rag-eplan-p8](../../cloudflare-rag-eplan-p8/)** — semantic search over the 2026 EPLAN P8 docs (`POST https://rag2026.covaga.xyz/search`).
+- **[cloudflare-rag-eplan-2027](../../cloudflare-rag-eplan-2027/)** — keyword/FTS5 search over the 2027 EPLAN P8 docs (`POST https://rag2027.covaga.xyz/search`). The skill tells Claude to consult this one first for exact action/parameter names, and the 2026 one when the query shares no vocabulary with the docs at all.
 
 ## Coverage
 
