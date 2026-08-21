@@ -24,15 +24,19 @@ guess EPLAN action parameters**.
 
 ## 2. The local `eplan` action server
 
-It exposes **166 tools**:
+It exposes **172 tools**:
 
 - **7 connection/utility tools**: `eplan_versions`, `eplan_servers`,
   `eplan_connect`, `eplan_status`, `eplan_ping`, `eplan_test`,
   `eplan_disconnect`.
-- **155 EPLAN actions** → `eplan_<action>` (e.g. `eplan_open_project`).
+- **161 EPLAN actions** → `eplan_<action>` (e.g. `eplan_open_project`).
   Includes 5 discovery tools (`eplan_settings_list_children`,
   `eplan_list_schemes`, `eplan_list_report_templates`, `eplan_list_layers`,
-  `eplan_list_enums`) that enumerate real EPLAN catalogs instead of guessing.
+  `eplan_list_enums`) that enumerate real EPLAN catalogs instead of guessing,
+  and 4 live-DataModel tools (`eplan_live_query_functions`,
+  `eplan_live_query_pages`, `eplan_live_set_function_text`,
+  `eplan_live_set_connection_designations`) that read/edit the open project's
+  object model via runtime reflection — see §4 below.
 - **4 Asset Administration Shell tools** → `aas_<action>`
   (`aas_export_part`, `aas_export_project`, `aas_inspect_package`,
   `aas_import_parts`) for AAS/AASX digital-twin export and import.
@@ -62,8 +66,14 @@ Tools return JSON. Actions typically return:
 read the message; it usually points at a bad parameter or a missing precondition
 (e.g. no project open).
 
-`success: true` from a directly-executed utility (`RegisterScript`,
-`ExecuteScript`, `UnregisterScript`) only means EPLAN accepted the call.
+`success: true` from a directly-executed utility (`ExecuteScript`) only means
+EPLAN accepted the call. Generated scripts are one-shot `[Start]`-only classes
+run via `ExecuteScript` alone — they are deliberately **not** passed through
+`RegisterScript`/`UnregisterScript` (that pair is for installing a script's
+persistent `[DeclareAction]`/`[DeclareEventHandler]`/`[DeclareMenu]` hooks,
+which these scripts don't have; registering them anyway just produced a
+spurious "script does not contain attributes for loading" warning in
+EPLAN's own UI and two wasted remote-API round-trips per call).
 
 ---
 
@@ -124,14 +134,29 @@ All of these exist as `eplan_*` tools:
   (`parts_db_*`), **typed settings** get/set
   (`settings_get/set_string|bool|int|double`), **PathMap** variable substitution,
   and `execute_custom_script` to run arbitrary C# inside EPLAN.
+- **Live DataModel (read/edit the open project via reflection):**
+  `eplan_live_query_functions`, `eplan_live_query_pages` (read, with substring
+  filter + result limit), `eplan_live_set_function_text` (write `FUNC_TEXT`,
+  defaults to one function at a time, returns the previous value),
+  `eplan_live_set_connection_designations` (write the indexed
+  `FUNC_CONNECTIONDESIGNATION` property, re-reads after writing to confirm).
+  These reach `Eplan.EplApi.DataModel`/`HEServices` types via
+  `AppDomain.CurrentDomain.GetAssemblies()` + `Assembly.Load` fallback instead
+  of a static `using`, because that `using` doesn't compile in EPLAN's script
+  engine (CS0234) and, separately, the managed assembly names changed
+  (`Eplan.EplApi.DataModelu` → `...DataModelNetu`) starting with EPLAN 2025/2027
+  — a hardcoded old name throws `BadImageFormatException` on newer installs.
 
 ### Escape hatches
 
 - `eplan_execute_raw_action("ActionName /PARAM:value ...")` — run any EPLAN
   action string directly (still wrapped in QuietMode). Use after confirming the
   syntax with the RAG.
-- `eplan_execute_custom_script(<C# code>)` — run a full C# script with access
-  to `Eplan.EplApi.*`. Write results to `{{RESULT_PATH}}` as JSON.
+- `eplan_execute_custom_script(<C# code>, timeout_seconds=30.0)` — run a full
+  C# script with access to `Eplan.EplApi.*`. Write results to
+  `{{RESULT_PATH}}` as JSON. Raise `timeout_seconds` for scripts that walk
+  large collections (e.g. reflection over every function/page in a big
+  project); the default is tuned for small scripts, not bulk enumeration.
 
 ---
 
@@ -168,6 +193,11 @@ All of these exist as `eplan_*` tools:
   `LAYOUTSPACES` only.
 - **Don't invent parameters.** When unsure, query the RAG (`rag2026.covaga.xyz`)
   for the authoritative action page.
+- **Custom C# scripts can't `using Eplan.EplApi.DataModel;`** — that statement
+  doesn't compile in EPLAN's script engine (CS0234). Reach DataModel/HEServices
+  types via reflection instead (see the `live_*` tools in §4), and don't
+  hardcode the managed assembly name — it's `...Netu`-suffixed on EPLAN
+  2025/2027, not the pre-2025 name.
 
 ---
 

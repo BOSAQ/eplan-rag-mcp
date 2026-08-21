@@ -44,10 +44,15 @@ Each sub-project has its own README with installation and usage details.
 ### Local EPLAN automation (P8)
 
 The local MCP server lets Claude drive a running EPLAN instance. It exposes
-**166 tools**: 7 connection/utility tools, **155 EPLAN actions** (`eplan_*`,
+**172 tools**: 7 connection/utility tools, **161 EPLAN actions** (`eplan_*`,
 every one executed silently inside a C# script under QuietMode — no EPLAN
 dialog can block unattended runs), and **4 Asset Administration Shell tools**
-(`aas_*`) for AAS/AASX digital-twin export and import.
+(`aas_*`) for AAS/AASX digital-twin export and import. The 161 include 4
+live-DataModel tools (`eplan_live_query_functions`, `eplan_live_query_pages`,
+`eplan_live_set_function_text`, `eplan_live_set_connection_designations`) that
+read and edit the currently open project's object model via runtime
+reflection, working around a script-engine limitation on static `using`
+directives.
 
 The EPLAN version is **auto-detected**: the server scans
 `C:\Program Files\EPLAN\Platform` and targets the newest installed version.
@@ -229,10 +234,14 @@ Notes:
 ### 本地 EPLAN 自动化（P8）
 
 本地 MCP 服务器让 Claude 能够驱动正在运行的 EPLAN 实例，共提供
-**166 个工具**：7 个连接/辅助工具、**155 个 EPLAN 操作**（`eplan_*`，
+**172 个工具**：7 个连接/辅助工具、**161 个 EPLAN 操作**（`eplan_*`，
 每一个都在 QuietMode 下的 C# 脚本中静默执行 —— 不会有任何 EPLAN
 对话框阻塞无人值守的运行），以及 **4 个资产管理壳工具**
-（`aas_*`），用于 AAS/AASX 数字孪生的导出与导入。
+（`aas_*`），用于 AAS/AASX 数字孪生的导出与导入。这 161 个操作中
+包含 4 个实时 DataModel 工具（`eplan_live_query_functions`、
+`eplan_live_query_pages`、`eplan_live_set_function_text`、
+`eplan_live_set_connection_designations`），通过运行时反射读取和
+编辑当前打开项目的对象模型，绕开脚本引擎对静态 `using` 指令的限制。
 
 EPLAN 版本会被**自动检测**：服务器会扫描
 `C:\Program Files\EPLAN\Platform` 并选用已安装的最新版本，
