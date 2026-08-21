@@ -7,18 +7,20 @@ It assumes you are connected through one or more of the MCP servers in this repo
 
 ## 1. What you are connected to
 
-There are up to **three MCP servers**, each a different capability:
+There are up to **four MCP servers**, each a different capability:
 
 | MCP server | Kind | What it lets you do |
 |------------|------|---------------------|
 | `eplan` (local) | Action server | **Control a running EPLAN Electric P8 instance** — open/close projects, export, import, reports, checks, renumber, parts DB, settings, run C# scripts, etc. |
-| `eplan-rag` (remote) | Knowledge | **Look up the EPLAN P8 API** (actions, classes, properties, parameters) via semantic search. |
+| `eplan-rag` (remote) | Knowledge | **Look up the EPLAN P8 API** (2026 docs, actions/classes/properties/parameters) via **semantic search** (Vectorize + bge-base). |
+| `eplan-wiki-2027` (remote) | Knowledge | **Look up the EPLAN P8 API** (2027 docs) via **keyword/full-text search** (SQLite FTS5 + bm25). Prefer this over `eplan-rag` when you already know or can guess the exact class/method/property name — measured head-to-head, FTS5 wins that case and semantic search wins only when the query shares no vocabulary with the docs at all. |
 | `eecpro-rag` (remote) | Knowledge | **Look up the EPLAN EEC Pro 2026** documentation via semantic search. |
 
-If `eplan-rag` is not connected, you can still query the P8 docs over REST:
-`POST https://rag2026.covaga.xyz/search` with body `{"query": "...", "topK": 5}`.
-Use this whenever you are unsure of an exact action name or parameter — **do not
-guess EPLAN action parameters**.
+If `eplan-rag`/`eplan-wiki-2027` aren't connected, you can still query them over REST:
+`POST https://rag2026.covaga.xyz/search` (semantic, 2026) or
+`POST https://rag2027.covaga.xyz/search` (keyword, 2027), body `{"query": "...", "topK": 5}`.
+Use one of these whenever you are unsure of an exact action name or parameter —
+**do not guess EPLAN action parameters**.
 
 ---
 

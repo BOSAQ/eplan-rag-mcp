@@ -76,17 +76,28 @@ To start Eplan remoting, you must first activate the **Allow remote access via R
 
 ![Allow remote access via Remote Client](Remoting_Setting_AllowLocalAccess.png)
 
-### Remote documentation RAGs (P8 and EEC Pro)
+### Remote documentation RAGs (P8, EEC Pro, and 2027)
 
 These are already deployed and ready to use — no local data required:
 
 ```bash
-# EPLAN Electric P8 documentation
+# EPLAN Electric P8 documentation (2026, semantic search)
 claude mcp add eplan-rag -- cmd /c npx mcp-remote https://rag2026.covaga.xyz/mcp
 
 # EPLAN EEC Pro 2026 documentation
 claude mcp add eecpro-rag -- cmd /c npx mcp-remote https://rageecpro.covaga.xyz/mcp
+
+# EPLAN Electric P8 documentation (2027, keyword/full-text search)
+claude mcp add eplan-wiki-2027 -- cmd /c npx mcp-remote https://rag2027.covaga.xyz/mcp
 ```
+
+`eplan-wiki-2027` is deliberately a separate server, not a 2026→2027 upgrade of
+`eplan-rag`: different doc version, and a different search mode (SQLite FTS5/bm25
+keyword matching over [`cloudflare-rag-eplan-2027/`](cloudflare-rag-eplan-2027/)'s
+bundled wiki, vs. `eplan-rag`'s Vectorize+bge semantic search). Measured against
+each other on real queries, they fail differently — FTS5 wins on exact-name lookups
+("what's the signature of X"), semantic wins when the query shares no vocabulary
+with the docs at all. Use both.
 
 They also expose a plain REST API (handy for verifying EPLAN action names and
 parameters while developing):
@@ -94,6 +105,9 @@ parameters while developing):
 ```bash
 curl -X POST https://rag2026.covaga.xyz/search -H "Content-Type: application/json" \
      -d "{\"query\": \"export project pdf\", \"topK\": 3}"
+
+curl -X POST https://rag2027.covaga.xyz/search -H "Content-Type: application/json" \
+     -d "{\"query\": \"FindAction\", \"topK\": 3}"
 ```
 
 See [`cloudflare-rag-eplan-p8/README.md`](cloudflare-rag-eplan-p8/README.md) and [`cloudflare-rag-eecpro/README.md`](cloudflare-rag-eecpro/README.md) for the tools, REST endpoints, and architecture.
@@ -265,17 +279,25 @@ claude mcp list   # 应当能列出 "eplan"
 
 ![Allow remote access via Remote Client](Remoting_Setting_AllowLocalAccess.png)
 
-### 远程文档 RAG（P8 与 EEC Pro）
+### 远程文档 RAG（P8、EEC Pro、以及 2027）
 
-这两个服务已经部署完毕、开箱即用 —— 无需任何本地数据：
+这些服务已经部署完毕、开箱即用 —— 无需任何本地数据：
 
 ```bash
-# EPLAN Electric P8 文档
+# EPLAN Electric P8 文档（2026，语义搜索）
 claude mcp add eplan-rag -- cmd /c npx mcp-remote https://rag2026.covaga.xyz/mcp
 
 # EPLAN EEC Pro 2026 文档
 claude mcp add eecpro-rag -- cmd /c npx mcp-remote https://rageecpro.covaga.xyz/mcp
+
+# EPLAN Electric P8 文档（2027，关键词/全文搜索）
+claude mcp add eplan-wiki-2027 -- cmd /c npx mcp-remote https://rag2027.covaga.xyz/mcp
 ```
+
+`eplan-wiki-2027`是一个独立的服务，而不是`eplan-rag`从 2026 到 2027 的升级版：文档版本不同，
+搜索方式也不同（基于 SQLite FTS5/bm25 的关键词匹配，而非 Vectorize+bge 语义搜索）。两者各有
+所长——精确名称查询（"X 的方法签名是什么"）FTS5 更准，完全不含文档原词的模糊提问语义搜索更强，
+建议两个都装。
 
 它们同时提供普通的 REST API（在开发过程中用于核对 EPLAN 操作名称和
 参数非常方便）：
