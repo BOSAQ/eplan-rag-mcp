@@ -1,6 +1,6 @@
 ---
 name: eplan-development
-description: Develop EPLAN Electric P8 scripts, API extensions, and remote-control applications. Use when writing C# scripts for EPLAN (actions, event handlers, ribbon), accessing the EPLAN API (parts database, projects, pages), building external apps that drive EPLAN via Remote Client, or debugging EPLAN automation issues (blocking, threading, dispose). Covers EPLAN 2022–2025.
+description: Develop EPLAN Electric P8 scripts, API extensions, and remote-control applications. Use when writing C# scripts for EPLAN (actions, event handlers, ribbon), accessing the EPLAN API (parts database, projects, pages), building external apps that drive EPLAN via Remote Client, or debugging EPLAN automation issues (blocking, threading, dispose). Covers EPLAN 2022–2027.
 ---
 
 # EPLAN Electric P8 Development
@@ -22,7 +22,8 @@ Note: scripts CAN use some API namespaces (e.g. `Eplan.EplApi.MasterData` for th
 - **`references/script-basics.md`** — Script structure, entry-point attributes (`[Start]`, `[DeclareAction]`, `[DeclareEventHandler]`, `[DeclareRegister]`), deployment, scripting limitations.
 - **`references/actions-reference.md`** — Executing actions with `CommandLineInterpreter` + `ActionCallingContext`; catalog of common actions (backup, export PDF, reports, labels, edit, selectionset…) with their parameters.
 - **`references/core-classes.md`** — `Progress`, `Decider`, `PathMap` variables, `Settings`, `MultiLangString`, ribbon/context menus, `QuietModeStep`, system messages (`BaseException`, `SysMessagesCollection`).
-- **`references/api-data-access.md`** — Parts database (`MDPartsManagement`), part properties, user-defined properties, multilanguage string parsing, resolving `$(MD_DOCUMENTS)`-style paths.
+- **`references/api-data-access.md`** — Parts database (`MDPartsManagement`), part properties, user-defined properties, multilanguage string parsing, resolving `$(MD_DOCUMENTS)`-style paths. Also: why `using Eplan.EplApi.DataModel;`/`...HEServices;` don't compile in scripts (CS0234) and how to reach that object model anyway.
+- **`references/e3d-installation-spaces.md`** — The version-proof runtime-reflection recipe for reaching `Eplan.EplApi.DataModel`/`HEServices` from a script (`LockingStep`, `FindType()` assembly scanning, EPLAN 2027's `...Netu`-suffixed assemblies), applied to creating 3D installation spaces and inserting window macros headlessly.
 - **`references/remoting.md`** — `EplanRemoteClient`: server discovery, dynamic ports, headless launch, version gotchas (2023 vs 2025), executing actions and scripts remotely, Cogineer generation from Excel.
 - **`references/pitfalls.md`** — CRITICAL: the command-blocking issue (message loop / monitor thread), `using`/`Dispose` discipline, sequential execution model, error-handling rules.
 - **`references/integration-patterns.md`** — Connecting EPLAN to the outside: HTTP servers, SignalR real-time messaging, forwarding EPLAN system errors to external services.
@@ -51,3 +52,5 @@ Use natural-language queries in English ("action to renumber devices", "PageProp
 5. **EPLAN 2025 remoting requires "Remote Client Access"** enabled in EPLAN options; transport is gRPC (default port 49152, dynamic). In 2023 it was on by default.
 6. **Target .NET Framework 4.8.1** for EPLAN 2025 API/RemoteClient work; reference DLLs from `C:\Program Files\EPLAN\Platform\<version>\Bin\`.
 7. **Verify action names/parameters against the RAG** — many are undocumented and case-sensitive.
+8. **Never `using Eplan.EplApi.DataModel;`/`...HEServices;` in a script** — that statement doesn't compile in EPLAN's script engine (CS0234, a fixed assembly set). Reach that object model via runtime reflection instead, and never hardcode the assembly name: it's `Eplan.EplApi.DataModelu`/`HEServicesu` through EPLAN ~2023, `...DataModelNetu`/`HEServicesNetu` on 2025/2027 — a hardcoded old name throws `BadImageFormatException` on 2027. See `references/e3d-installation-spaces.md`.
+9. **Never `RegisterScript` a one-shot `[Start]` script.** That's for installing persistent hooks (`[DeclareAction]`/`[DeclareEventHandler]`/`[DeclareRegister]`); a `[Start]`-only script has none, so registering it first just produces a spurious EPLAN warning and wastes two remote-API round-trips. Call `ExecuteScript` alone. See `references/pitfalls.md` #9.

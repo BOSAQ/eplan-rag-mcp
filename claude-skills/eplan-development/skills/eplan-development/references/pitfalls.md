@@ -107,3 +107,15 @@ Long remote scripts give weak completion signals. Robust patterns:
 - Dialogs kill headless automation — suppress with `QuietModeStep(QuietModes.ShowNoDialogs)` around dialog-prone actions, and never `ShowDialog()` in automation paths.
 - Action names and parameters are case-sensitive strings with zero compile-time checking — a typo fails silently or at runtime. Verify against the RAG.
 - Ports are dynamic; process name is `W3u`; EPLAN 2025 needs "Remote Client Access" enabled (see remoting.md).
+
+## 9. Don't `RegisterScript` a one-shot `[Start]` script
+
+`RegisterScript` installs a script's *persistent* hooks (`[DeclareAction]`/
+`[DeclareEventHandler]`/`[DeclareRegister]`, see script-basics.md). A
+generated script that only has `[Start]` has none of those, so
+`RegisterScript`ing it before `ExecuteScript` accomplishes nothing but an
+EPLAN-side warning ("The script does not contain attributes for loading")
+and two extra remote-API round-trips (register + unregister) per call —
+measured at roughly 44% of total run time for a small script. Call
+`ExecuteScript` alone for one-shot scripts; reserve `RegisterScript`/
+`UnregisterScript` for scripts you're actually loading persistently.

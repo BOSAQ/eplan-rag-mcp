@@ -66,6 +66,14 @@ public void UnRegister() { /* remove ribbon tab */ }
 - **Persistent**: Utilities > Scripts > Load (registers `[DeclareAction]`/`[DeclareEventHandler]`/ribbon; survives until unloaded; auto-loads at startup once loaded).
 - **From another script/app**: the `ExecuteScript` action with parameter `ScriptFile` (full path). This also works via Remote Client — the script runs inside EPLAN with full context.
 
+> **Don't `RegisterScript` a one-shot script.** `RegisterScript`/`UnregisterScript`
+> install/remove a script's *persistent* hooks (`[DeclareAction]`/
+> `[DeclareEventHandler]`/`[DeclareRegister]`) — see "Persistent" above. A
+> script that only has `[Start]` has no such attributes, so registering it
+> first accomplishes nothing except an EPLAN-side warning ("The script does
+> not contain attributes for loading") and two wasted remote-API round-trips.
+> For a `[Start]`-only script, call `ExecuteScript` alone.
+
 ## Scripting limitations vs API
 
 - Scripts use a C# subset compiled by EPLAN. Partial classes across files, some newer C# language features, and designer-split WinForms files are not available — keep a form's `InitializeComponent` inline in the same class.
