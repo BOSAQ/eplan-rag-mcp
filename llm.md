@@ -24,19 +24,26 @@ guess EPLAN action parameters**.
 
 ## 2. The local `eplan` action server
 
-It exposes **172 tools**:
+It exposes **182 tools**:
 
-- **7 connection/utility tools**: `eplan_versions`, `eplan_servers`,
+- **8 connection/utility tools**: `eplan_versions`, `eplan_servers`,
   `eplan_connect`, `eplan_status`, `eplan_ping`, `eplan_test`,
-  `eplan_disconnect`.
-- **161 EPLAN actions** → `eplan_<action>` (e.g. `eplan_open_project`).
+  `eplan_disconnect`, `eplan_list_extensions`.
+- **170 EPLAN actions** → `eplan_<action>` (e.g. `eplan_open_project`).
   Includes 5 discovery tools (`eplan_settings_list_children`,
   `eplan_list_schemes`, `eplan_list_report_templates`, `eplan_list_layers`,
   `eplan_list_enums`) that enumerate real EPLAN catalogs instead of guessing,
-  and 4 live-DataModel tools (`eplan_live_query_functions`,
+  4 live-DataModel tools (`eplan_live_query_functions`,
   `eplan_live_query_pages`, `eplan_live_set_function_text`,
   `eplan_live_set_connection_designations`) that read/edit the open project's
-  object model via runtime reflection — see §4 below.
+  object model via runtime reflection (see §4 below), application lifecycle
+  control (`eplan_app_launch`, `eplan_app_shutdown`, `eplan_app_restart` —
+  full exit/relaunch/reconnect/reopen cycles for unattended add-in
+  deploy-test loops), scratch project fixtures
+  (`eplan_scratch_project_create` / `_discard` / `_list` — disposable clones
+  of a template project; deletion is confined to the scratch root), and
+  `eplan_get_system_messages` (read EPLAN's system message tree — the same
+  errors/warnings the user sees in the GUI's system messages dialog).
 - **4 Asset Administration Shell tools** → `aas_<action>`
   (`aas_export_part`, `aas_export_project`, `aas_inspect_package`,
   `aas_import_parts`) for AAS/AASX digital-twin export and import.
@@ -82,9 +89,11 @@ EPLAN's own UI and two wasted remote-API round-trips per call).
 1. **Check / connect first.** Call `eplan_status` (or `eplan_servers` →
    `eplan_connect`). Almost every action needs an open connection. Port and
    EPLAN version are auto-detected; pass `version` only if the user asks for a
-   specific one. If `eplan_servers` returns `[]` the connection still works via
-   the default port (49152) — that empty list is a known limitation, not a
-   failure. To reach EPLAN on another machine pass `host` (port required then).
+   specific one. If `eplan_servers` returns `[]` the connection usually still
+   works — that empty list is a known limitation (especially right after EPLAN
+   starts), not a failure: `eplan_connect` falls back to the TCP ports
+   EPLAN.exe actually listens on (via netstat), then the default 49152. To
+   reach EPLAN on another machine pass `host` (port required then).
 2. **Pick the project context.** Most actions take an optional `project_name`. If
    omitted, EPLAN uses the **currently selected/open** project. Use
    `eplan_get_current_project` to confirm what that is.

@@ -1100,6 +1100,94 @@ public class PathMapAll_{uuid.uuid4().hex[:6]}
 # =============================================================================
 
 
+_MESSAGE_LEVELS = ("Message", "Warning", "Error", "FatalError")
+
+
+def get_system_messages(min_level: str = "Warning", max_messages: int = 100) -> dict:
+    """
+    Read EPLAN's system message tree - the same list the user sees in the
+    GUI's system messages dialog.
+
+    Covers everything since EPLAN started (startup errors, add-in load
+    problems, script compile errors, action warnings), not just messages
+    from MCP-executed actions. The definitive way to answer "what errors is
+    EPLAN showing?" without looking at the screen.
+
+    Args:
+        min_level: Minimum severity: "Message" (everything), "Warning",
+            "Error", or "FatalError". Default "Warning".
+        max_messages: Return at most this many, keeping the NEWEST ones
+            (default 100).
+
+    Note: BaseException in scripts exposes only the message text - per-entry
+    severity is not readable (BaseException.Level does not exist; verified
+    live 2026-08-20, CS1061), so filtering happens via the collection's
+    minimum-level constructor argument.
+    """
+    if min_level not in _MESSAGE_LEVELS:
+        return {"success": False,
+                "error": f"min_level must be one of {_MESSAGE_LEVELS}, got {min_level!r}"}
+    try:
+        max_messages = int(max_messages)
+        if max_messages <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return {"success": False, "error": "max_messages must be a positive integer"}
+
+    script = f"""using System;
+using System.IO;
+using System.Collections.Generic;
+using Eplan.EplApi.Base;
+using Eplan.EplApi.Scripting;
+
+public class McpGetSysMessages
+{{
+    [Start]
+    public void Run()
+    {{
+        var results = new Dictionary<string, object>();
+        var msgs = new List<string>();
+        try
+        {{
+            var col = new SysMessagesCollection(0, MessageLevel.{min_level});
+            var it = col.GetSysMsgEnumerator();
+            while (it.MoveNext())
+            {{
+                var m = it.Current as BaseException;
+                if (m != null && !string.IsNullOrEmpty(m.Message))
+                {{
+                    msgs.Add(m.Message);
+                }}
+            }}
+            int total = msgs.Count;
+            if (total > {max_messages})
+            {{
+                msgs = msgs.GetRange(total - {max_messages}, {max_messages});
+            }}
+            results["success"] = true;
+            results["total"] = total;
+            results["messages"] = msgs;
+        }}
+        catch (Exception ex)
+        {{
+            results["success"] = false;
+            results["error"] = ex.Message;
+        }}
+        File.WriteAllText(@"{{{{RESULT_PATH}}}}", Newtonsoft.Json.JsonConvert.SerializeObject(results));
+    }}
+}}
+"""
+    res = _execute_script(script)
+    if not res.get("success"):
+        return res
+    inner = res.get("results") or {}
+    return {"success": inner.get("success", False),
+            "min_level": min_level,
+            "total_in_tree": inner.get("total"),
+            "messages": inner.get("messages", []),
+            "error": inner.get("error")}
+
+
 def execute_custom_script(script_code: str, timeout_seconds: float = 30.0) -> dict:
     """
     Execute a custom C# script in EPLAN.

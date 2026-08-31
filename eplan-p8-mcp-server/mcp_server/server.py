@@ -235,6 +235,70 @@ except ModuleNotFoundError as e:
 
 
 # ============================================================================
+# EXTENSION MODULES (private / site-specific tools)
+# ============================================================================
+# EPLAN_MCP_EXTENSIONS is an os.pathsep-separated list of directories. Every
+# top-level *.py file in each directory (not starting with "_") is imported
+# and its __all__ functions are registered as MCP tools, exactly like the
+# built-in actions. This lets a private repo ship its own tools (custom
+# add-in test harnesses, company-specific workflows) without forking this
+# public server.
+#
+# An extension module can:
+#   - set TOOL_PREFIX = "myprefix_" (default "eplan_") to namespace its tools
+#   - import shared plumbing: `from actions._base import ...`,
+#     `import actions` (the api folder is already on sys.path)
+# A broken extension is reported on stderr and skipped - it never prevents
+# the server from starting.
+
+def load_extensions(env_value: str = None):
+    """Import and register extension modules from EPLAN_MCP_EXTENSIONS dirs."""
+    import importlib.util
+
+    raw = env_value if env_value is not None else os.environ.get("EPLAN_MCP_EXTENSIONS", "")
+    loaded = []
+    for ext_dir in [d.strip() for d in raw.split(os.pathsep) if d.strip()]:
+        if not os.path.isdir(ext_dir):
+            print(f"Extension dir not found, skipping: {ext_dir}", file=sys.stderr)
+            continue
+        if ext_dir not in sys.path:
+            sys.path.insert(0, ext_dir)
+        for fname in sorted(os.listdir(ext_dir)):
+            if not fname.endswith(".py") or fname.startswith("_"):
+                continue
+            mod_name = os.path.splitext(fname)[0]
+            try:
+                spec = importlib.util.spec_from_file_location(
+                    f"mcp_extension_{mod_name}", os.path.join(ext_dir, fname))
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                if not getattr(module, "__all__", None):
+                    print(f"Extension {fname} has no __all__, skipping.", file=sys.stderr)
+                    continue
+                prefix = getattr(module, "TOOL_PREFIX", "eplan_")
+                register_actions(module, prefix=prefix)
+                loaded.append({"module": fname, "dir": ext_dir, "prefix": prefix,
+                               "tools": list(module.__all__)})
+                print(f"Extension loaded: {fname} ({len(module.__all__)} tools, "
+                      f"prefix '{prefix}')", file=sys.stderr)
+            except Exception as e:
+                print(f"Extension {fname} failed to load, skipping: {e}", file=sys.stderr)
+    return loaded
+
+
+_loaded_extensions = load_extensions()
+
+
+@mcp.tool()
+def eplan_list_extensions() -> str:
+    """List the extension modules (and their tools) loaded via EPLAN_MCP_EXTENSIONS."""
+    return json.dumps({
+        "env": os.environ.get("EPLAN_MCP_EXTENSIONS", ""),
+        "extensions": _loaded_extensions,
+    }, indent=2)
+
+
+# ============================================================================
 # MAIN
 # ============================================================================
 

@@ -101,6 +101,58 @@ def _select_dotnet_runtime(runtime: str) -> None:
         logger.warning(f"pythonnet: runtime selection failed ({_pnet_err})")
 
 
+EPLAN_EXE_NAME = "EPLAN.exe"
+
+
+def eplan_pids() -> list:
+    """PIDs of running EPLAN.exe processes (empty list on any error)."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["tasklist", "/FI", f"IMAGENAME eq {EPLAN_EXE_NAME}", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, timeout=15,
+        ).stdout
+        pids = []
+        for line in out.splitlines():
+            parts = [p.strip('"') for p in line.strip().split('","')]
+            if len(parts) >= 2 and parts[0].lower() == EPLAN_EXE_NAME.lower():
+                pids.append(int(parts[1]))
+        return pids
+    except Exception:
+        return []
+
+
+def eplan_listening_ports() -> list:
+    """TCP ports EPLAN.exe processes are LISTENING on (via netstat).
+
+    Fallback discovery: GetActiveEplanServersOnLocalMachine is unreliable
+    right after EPLAN (re)starts - it can return empty while the remoting
+    port is already up and accepting connections (observed live 2026-08-20:
+    fresh EPLAN 2027 listening on 49153, server enumeration empty). The
+    remoting port is dynamic (49152 is only the usual first choice), so
+    never assume the default - discover.
+    """
+    import subprocess
+    pids = set(eplan_pids())
+    if not pids:
+        return []
+    ports = []
+    try:
+        out = subprocess.run(["netstat", "-ano", "-p", "TCP"],
+                             capture_output=True, text=True, timeout=30).stdout
+        for line in out.splitlines():
+            parts = line.split()
+            # TCP  0.0.0.0:49153  0.0.0.0:0  LISTENING  45472
+            if (len(parts) >= 5 and parts[0] == "TCP" and parts[3] == "LISTENING"
+                    and parts[4].isdigit() and int(parts[4]) in pids):
+                port = parts[1].rsplit(":", 1)[-1]
+                if port.isdigit() and port not in ports:
+                    ports.append(port)
+    except Exception:
+        pass
+    return ports
+
+
 class EPLANConnectionManager:
     """Manages the connection to EPLAN via Remote Client API."""
 
@@ -241,32 +293,46 @@ class EPLANConnectionManager:
             from Eplan.EplApi.RemoteClient import EplanRemoteClient
             import System
 
-            # Auto-detect port if not specified
-            if not port:
+            # Auto-detect port(s) if not specified. Server enumeration first;
+            # if it comes back empty (it is unreliable right after EPLAN
+            # starts), fall back to EPLAN.exe's actual listening ports from
+            # netstat, then the historical default as a last resort. Each
+            # candidate is tried until one answers a Ping.
+            if port:
+                candidates = [str(port)]
+            else:
                 servers = self.get_active_servers()
                 if servers:
-                    port = servers[-1]["port"]
-                    logger.info(f"Auto-detected port: {port}")
+                    candidates = [servers[-1]["port"]]
+                    logger.info(f"Auto-detected port: {candidates[0]}")
                 else:
-                    port = self.DEFAULT_PORT
+                    candidates = (eplan_listening_ports() if host in ("localhost", "127.0.0.1")
+                                  else []) or [self.DEFAULT_PORT]
+                    logger.info(f"Server enumeration empty; trying ports: {candidates}")
 
-            self.port = port
-            logger.info(f"Connecting to {host}:{port}...")
-
-            self.client = EplanRemoteClient()
             timeout = System.TimeSpan.FromSeconds(self.TIMEOUT_SECONDS)
-            self.client.Connect(host, port, timeout)
-
-            if self.client.Ping():
-                self.connected = True
-                logger.info(f"Connected to EPLAN at {host}:{port}")
-                return {
-                    "success": True,
-                    "message": f"Connected to EPLAN at {host}:{port}",
-                    "port": port
-                }
-            else:
-                return {"success": False, "message": "Connected but ping failed"}
+            last_exc = None
+            for candidate in candidates:
+                try:
+                    logger.info(f"Connecting to {host}:{candidate}...")
+                    client = EplanRemoteClient()
+                    client.Connect(host, candidate, timeout)
+                    if client.Ping():
+                        self.client = client
+                        self.port = candidate
+                        self.connected = True
+                        logger.info(f"Connected to EPLAN at {host}:{candidate}")
+                        return {
+                            "success": True,
+                            "message": f"Connected to EPLAN at {host}:{candidate}",
+                            "port": candidate
+                        }
+                    client.Dispose()
+                except Exception as exc:
+                    last_exc = exc
+            if last_exc is not None:
+                raise last_exc
+            return {"success": False, "message": "Connected but ping failed"}
 
         except Exception as e:
             self.last_error = f"Connection failed: {e}"
@@ -590,7 +656,7 @@ public class QuietExecute_{exec_id}
 """
 
     def _run_generated_script(self, action, script_path, result_path, started) -> dict:
-        """Register, execute, await the result file, and clean up a generated script."""
+        """Execute a generated [Start] script, await the result file, clean up."""
         try:
             logger.info(f"Wrapping action via script: {action} (script={os.path.basename(script_path)})")
             # Execute only - deliberately NOT RegisterScript first. The wrapper
