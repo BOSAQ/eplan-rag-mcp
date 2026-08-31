@@ -112,7 +112,7 @@ While the MCP servers let Claude *act* on EPLAN, the skill teaches Claude to *wr
 Install from Claude Code (this repo is also a plugin marketplace):
 
 ```
-/plugin marketplace add covagashi/Eplan_2026_IA_MCP_scripts
+/plugin marketplace add covagashi/eplan-rag-mcp
 /plugin install eplan-development@eplan-tools
 ```
 
@@ -343,7 +343,7 @@ curl -X POST https://rag2026.covaga.xyz/search -H "Content-Type: application/jso
 从 Claude Code 中安装（本仓库同时也是一个插件市场）：
 
 ```
-/plugin marketplace add covagashi/Eplan_2026_IA_MCP_scripts
+/plugin marketplace add covagashi/eplan-rag-mcp
 /plugin install eplan-development@eplan-tools
 ```
 

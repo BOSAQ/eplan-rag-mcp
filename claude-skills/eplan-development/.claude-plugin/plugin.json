@@ -6,8 +6,8 @@
     "name": "covagashi",
     "url": "https://github.com/covagashi"
   },
-  "homepage": "https://github.com/covagashi/Eplan_2026_IA_MCP_scripts/tree/main/claude-skills/eplan-development",
-  "repository": "https://github.com/covagashi/Eplan_2026_IA_MCP_scripts",
+  "homepage": "https://github.com/covagashi/eplan-rag-mcp/tree/main/claude-skills/eplan-development",
+  "repository": "https://github.com/covagashi/eplan-rag-mcp",
   "license": "MIT",
   "keywords": [
     "eplan",
