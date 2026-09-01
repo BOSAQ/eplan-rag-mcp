@@ -1119,10 +1119,14 @@ def get_system_messages(min_level: str = "Warning", max_messages: int = 100) -> 
         max_messages: Return at most this many, keeping the NEWEST ones
             (default 100).
 
-    Note: BaseException in scripts exposes only the message text - per-entry
-    severity is not readable (BaseException.Level does not exist; verified
-    live 2026-08-20, CS1061), so filtering happens via the collection's
-    minimum-level constructor argument.
+    Each returned message is {"text", "level", "occurrences"}: "level" is the
+    entry's own severity (BaseException.MessageLevel - not "Level", which
+    does not exist and raises CS1061; verified live 2026-09-01) so a
+    min_level="Message" call can still be filtered/grouped by severity
+    client-side. "occurrences" is EPLAN's own count of consecutive identical
+    messages joined into one tree item (see BaseException.NumberOfOccurrences)
+    - usually 1, since consolidation depends on EPLAN's logging mode, not
+    something this tool controls.
     """
     if min_level not in _MESSAGE_LEVELS:
         return {"success": False,
@@ -1146,7 +1150,7 @@ public class McpGetSysMessages
     public void Run()
     {{
         var results = new Dictionary<string, object>();
-        var msgs = new List<string>();
+        var msgs = new List<Dictionary<string, object>>();
         try
         {{
             var col = new SysMessagesCollection(0, MessageLevel.{min_level});
@@ -1156,7 +1160,11 @@ public class McpGetSysMessages
                 var m = it.Current as BaseException;
                 if (m != null && !string.IsNullOrEmpty(m.Message))
                 {{
-                    msgs.Add(m.Message);
+                    var entry = new Dictionary<string, object>();
+                    entry["text"] = m.Message;
+                    entry["level"] = m.MessageLevel.ToString();
+                    entry["occurrences"] = m.NumberOfOccurrences;
+                    msgs.Add(entry);
                 }}
             }}
             int total = msgs.Count;
