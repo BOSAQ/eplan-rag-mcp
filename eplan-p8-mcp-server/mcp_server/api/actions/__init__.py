@@ -283,8 +283,24 @@ from .scripted import (
     # PathMap
     pathmap_substitute,
     pathmap_get_common_paths,
+    # System messages
+    get_system_messages,
     # Custom scripts
     execute_custom_script,
+)
+
+# Application lifecycle (launch/shutdown/restart EPLAN itself)
+from .lifecycle import (
+    app_launch,
+    app_shutdown,
+    app_restart,
+)
+
+# Scratch project fixtures (disposable clones for unattended test runs)
+from .fixtures import (
+    scratch_project_create,
+    scratch_project_discard,
+    scratch_project_list,
 )
 
 # Discovery (enumerate real EPLAN catalogs instead of guessing)
@@ -398,7 +414,11 @@ __all__ = [
     # Scripted - PathMap
     'pathmap_substitute', 'pathmap_get_common_paths',
     # Scripted - Custom
-    'execute_custom_script',
+    'execute_custom_script', 'get_system_messages',
+    # Lifecycle
+    'app_launch', 'app_shutdown', 'app_restart',
+    # Scratch fixtures
+    'scratch_project_create', 'scratch_project_discard', 'scratch_project_list',
     # Discovery
     'settings_list_children', 'list_schemes', 'list_report_templates',
     'list_layers', 'list_enums',

@@ -28,7 +28,7 @@ eplan-development/                    # plugin root
 Inside Claude Code:
 
 ```
-/plugin marketplace add covagashi/Eplan_2026_IA_MCP_scripts
+/plugin marketplace add covagashi/eplan-rag-mcp
 /plugin install eplan-development@eplan-tools
 ```
 
@@ -37,11 +37,11 @@ Update later with `/plugin marketplace update eplan-tools`.
 ### Manual (copy the skill folder)
 
 ```bash
-git clone https://github.com/covagashi/Eplan_2026_IA_MCP_scripts
+git clone https://github.com/covagashi/eplan-rag-mcp
 # Windows — personal skill, available in all projects
-xcopy /E /I Eplan_2026_IA_MCP_scripts\claude-skills\eplan-development\skills\eplan-development %USERPROFILE%\.claude\skills\eplan-development
+xcopy /E /I eplan-rag-mcp\claude-skills\eplan-development\skills\eplan-development %USERPROFILE%\.claude\skills\eplan-development
 # macOS / Linux
-cp -r Eplan_2026_IA_MCP_scripts/claude-skills/eplan-development/skills/eplan-development ~/.claude/skills/eplan-development
+cp -r eplan-rag-mcp/claude-skills/eplan-development/skills/eplan-development ~/.claude/skills/eplan-development
 ```
 
 For a single project, copy to `<your-project>/.claude/skills/eplan-development` instead.

@@ -219,3 +219,63 @@ def test_build_action_bool_and_skipped_values():
 def test_build_action_quotes_values_with_spaces():
     action = _build_action("MyAction", NAME="hello world")
     assert action == 'MyAction /NAME:"hello world"'
+
+
+# ---------------------------------------------------------------------------
+# Port discovery fallback (netstat) and connect() candidate order
+# ---------------------------------------------------------------------------
+
+class _FakeCompleted:
+    def __init__(self, stdout):
+        self.stdout = stdout
+
+
+def test_eplan_pids_parses_tasklist_csv(monkeypatch):
+    out = ('"EPLAN.exe","45472","Console","1","2,345,678 K"\n'
+           '"EPLAN.exe","45999","Console","1","1,000 K"\n')
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _FakeCompleted(out))
+    assert eplan_connection.eplan_pids() == [45472, 45999]
+
+
+def test_eplan_pids_swallows_no_task_message(monkeypatch):
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *a, **k: _FakeCompleted("INFO: No tasks are running which match the specified criteria.\n"),
+    )
+    assert eplan_connection.eplan_pids() == []
+
+
+def test_eplan_listening_ports_only_listening_lines_of_eplan_pids(monkeypatch):
+    netstat = (
+        "  Proto  Local Address          Foreign Address        State           PID\n"
+        "  TCP    0.0.0.0:49153          0.0.0.0:0              LISTENING       45472\n"
+        "  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       999\n"
+        "  TCP    127.0.0.1:51000        127.0.0.1:49153        ESTABLISHED     45472\n"
+        "  TCP    [::]:49154             [::]:0                 LISTENING       45472\n"
+    )
+    monkeypatch.setattr(eplan_connection, "eplan_pids", lambda: [45472])
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _FakeCompleted(netstat))
+    # Not port 135 (another process), not 49153 twice, not the ESTABLISHED row.
+    assert eplan_connection.eplan_listening_ports() == ["49153", "49154"]
+
+
+def test_eplan_listening_ports_empty_without_eplan(monkeypatch):
+    monkeypatch.setattr(eplan_connection, "eplan_pids", lambda: [])
+
+    def _boom(*a, **k):  # netstat must not even be run
+        raise AssertionError("netstat should not run when EPLAN is not up")
+
+    monkeypatch.setattr("subprocess.run", _boom)
+    assert eplan_connection.eplan_listening_ports() == []
+
+
+def test_eplan_listening_ports_are_strings_like_default_port(monkeypatch):
+    # connect() feeds server enumeration, netstat and DEFAULT_PORT into the
+    # same client.Connect(host, candidate, timeout) call, so all three sources
+    # must agree on type.
+    netstat = "  TCP    0.0.0.0:49153   0.0.0.0:0   LISTENING   45472\n"
+    monkeypatch.setattr(eplan_connection, "eplan_pids", lambda: [45472])
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _FakeCompleted(netstat))
+    ports = eplan_connection.eplan_listening_ports()
+    assert all(isinstance(p, str) for p in ports)
+    assert isinstance(eplan_connection.EPLANConnectionManager.DEFAULT_PORT, str)

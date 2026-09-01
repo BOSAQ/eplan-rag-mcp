@@ -44,15 +44,22 @@ Each sub-project has its own README with installation and usage details.
 ### Local EPLAN automation (P8)
 
 The local MCP server lets Claude drive a running EPLAN instance. It exposes
-**172 tools**: 7 connection/utility tools, **161 EPLAN actions** (`eplan_*`,
+**182 tools**: 8 connection/utility tools, **170 EPLAN actions** (`eplan_*`,
 every one executed silently inside a C# script under QuietMode — no EPLAN
 dialog can block unattended runs), and **4 Asset Administration Shell tools**
-(`aas_*`) for AAS/AASX digital-twin export and import. The 161 include 4
+(`aas_*`) for AAS/AASX digital-twin export and import. The 170 include 4
 live-DataModel tools (`eplan_live_query_functions`, `eplan_live_query_pages`,
 `eplan_live_set_function_text`, `eplan_live_set_connection_designations`) that
 read and edit the currently open project's object model via runtime
 reflection, working around a script-engine limitation on static `using`
-directives.
+directives. Beyond individual actions they also cover the building blocks for
+fully unattended develop-deploy-test loops: EPLAN application lifecycle control
+(`eplan_app_launch` / `eplan_app_shutdown` / `eplan_app_restart` — exit EPLAN,
+swap add-in DLLs, relaunch, reconnect, reopen the project), disposable scratch
+project fixtures cloned from a template (`eplan_scratch_project_*`), reading
+EPLAN's system message tree (`eplan_get_system_messages` — see the same
+errors/warnings the user sees in the GUI), and private extension modules (see
+below).
 
 The EPLAN version is **auto-detected**: the server scans
 `C:\Program Files\EPLAN\Platform` and targets the newest installed version.
@@ -119,7 +126,7 @@ While the MCP servers let Claude *act* on EPLAN, the skill teaches Claude to *wr
 Install from Claude Code (this repo is also a plugin marketplace):
 
 ```
-/plugin marketplace add covagashi/Eplan_2026_IA_MCP_scripts
+/plugin marketplace add covagashi/eplan-rag-mcp
 /plugin install eplan-development@eplan-tools
 ```
 
@@ -176,6 +183,48 @@ python eplan-p8-mcp-server/tools/validate_actions.py
 1. **Verify against the docs** — use the remote P8 RAG (`https://rag2026.covaga.xyz`) to confirm the exact EPLAN action name and parameters.
 2. **Write meaningful docstrings + type hints** — they become the tool description and input schema the LLM sees and relies on.
 3. **Handle paths carefully** — Windows paths need escaping (`\\`) or forward slashes (`/`).
+
+## Private Extension Modules (`EPLAN_MCP_EXTENSIONS`)
+
+The server can load **extra tool modules from outside this repo** — for
+company-specific or private tooling (custom add-in test harnesses, internal
+workflows) that must not live in a public repository.
+
+Set the `EPLAN_MCP_EXTENSIONS` environment variable on the MCP server entry to
+one or more directories (separated by `;` on Windows). Every top-level `*.py`
+file there (not starting with `_`) is imported at startup and its `__all__`
+functions are registered as MCP tools, exactly like the built-in actions:
+
+```python
+# my_company_tools.py  (in a private repo, NOT in eplan-rag-mcp)
+TOOL_PREFIX = "acme_"          # optional, default "eplan_"
+__all__ = ["run_smoke_test"]
+
+import actions                  # the server's api/ folder is on sys.path
+from actions._base import _get_connected_manager
+
+def run_smoke_test(project_path: str) -> dict:
+    """Docstring becomes the tool description the LLM sees."""
+    clone = actions.scratch_project_create(project_path)
+    ...
+    return {"success": True}
+```
+
+Rules and behavior:
+
+- `TOOL_PREFIX` namespaces the tools (`acme_run_smoke_test` above).
+- Extensions can import everything the built-in actions use: `actions`,
+  `actions._base`, `actions.scripted._execute_script` (run C# inside EPLAN),
+  `eplan_connection`.
+- A broken extension is reported on stderr and skipped — it never prevents the
+  server from starting.
+- `eplan_list_extensions` shows what was loaded.
+
+Combined with the lifecycle and scratch-fixture tools this enables a fully
+unattended loop for developing private EPLAN add-ins: build the DLL → deploy →
+`eplan_app_restart` → verify the add-in's actions registered (e.g. via a
+FindAction script) → run them against a disposable scratch project →
+`eplan_get_system_messages` to catch anything EPLAN complained about.
 
 ## EPLAN Version Selection (automatic)
 
@@ -316,7 +365,7 @@ curl -X POST https://rag2026.covaga.xyz/search -H "Content-Type: application/jso
 从 Claude Code 中安装（本仓库同时也是一个插件市场）：
 
 ```
-/plugin marketplace add covagashi/Eplan_2026_IA_MCP_scripts
+/plugin marketplace add covagashi/eplan-rag-mcp
 /plugin install eplan-development@eplan-tools
 ```
 
