@@ -1,9 +1,12 @@
-# THIS IS UNDER DEVELOPMENT !!!!
-```
-CLAUDE OR ANY AI STILL DON'T  UNDERSTAND THE CONTEXT ABOUT HOW TO USE THE TOOL, NO UNLESS IT'S GUIDED AND PLANNED. BE CAREFUL
-```
-
-
+> **Status: actively developed, tools work.** The MCP server itself is
+> reliable — every action runs and has been exercised live. What's still
+> being sharpened is *context*: an LLM with 180+ low-level tools and no
+> guidance will guess wrong action names or parameters. Point it at the
+> [`eplan-development` skill](#claude-code-skill-for-eplan-development) and
+> the [docs RAGs](#remote-documentation-rags-p8-eec-pro-and-2027) before
+> asking it to do anything non-trivial, and give it a clear, planned task
+> rather than an open-ended one. Bug reports and PRs that improve tool
+> docstrings, the skill, or RAG coverage are very welcome.
 
 # EPLAN AI Automation Toolkit
 
