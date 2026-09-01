@@ -47,10 +47,10 @@ Each sub-project has its own README with installation and usage details.
 ### Local EPLAN automation (P8)
 
 The local MCP server lets Claude drive a running EPLAN instance. It exposes
-**182 tools**: 8 connection/utility tools, **170 EPLAN actions** (`eplan_*`,
+**180 tools**: 8 connection/utility tools, **168 EPLAN actions** (`eplan_*`,
 every one executed silently inside a C# script under QuietMode — no EPLAN
 dialog can block unattended runs), and **4 Asset Administration Shell tools**
-(`aas_*`) for AAS/AASX digital-twin export and import. The 170 include 4
+(`aas_*`) for AAS/AASX digital-twin export and import. The 168 include 4
 live-DataModel tools (`eplan_live_query_functions`, `eplan_live_query_pages`,
 `eplan_live_set_function_text`, `eplan_live_set_connection_designations`) that
 read and edit the currently open project's object model via runtime
@@ -62,7 +62,7 @@ swap add-in DLLs, relaunch, reconnect, reopen the project), disposable scratch
 project fixtures cloned from a template (`eplan_scratch_project_*`), reading
 EPLAN's system message tree (`eplan_get_system_messages` — see the same
 errors/warnings the user sees in the GUI), and private extension modules (see
-below).
+below). Full tool-by-tool reference: [the project wiki](https://github.com/covagashi/eplan-rag-mcp/wiki).
 
 The EPLAN version is **auto-detected**: the server scans
 `C:\Program Files\EPLAN\Platform` and targets the newest installed version.
@@ -300,14 +300,22 @@ Notes:
 ### 本地 EPLAN 自动化（P8）
 
 本地 MCP 服务器让 Claude 能够驱动正在运行的 EPLAN 实例，共提供
-**172 个工具**：7 个连接/辅助工具、**161 个 EPLAN 操作**（`eplan_*`，
+**180 个工具**：8 个连接/辅助工具、**168 个 EPLAN 操作**（`eplan_*`，
 每一个都在 QuietMode 下的 C# 脚本中静默执行 —— 不会有任何 EPLAN
 对话框阻塞无人值守的运行），以及 **4 个资产管理壳工具**
-（`aas_*`），用于 AAS/AASX 数字孪生的导出与导入。这 161 个操作中
+（`aas_*`），用于 AAS/AASX 数字孪生的导出与导入。这 168 个操作中
 包含 4 个实时 DataModel 工具（`eplan_live_query_functions`、
 `eplan_live_query_pages`、`eplan_live_set_function_text`、
 `eplan_live_set_connection_designations`），通过运行时反射读取和
 编辑当前打开项目的对象模型，绕开脚本引擎对静态 `using` 指令的限制。
+除了单个操作之外，这些工具还覆盖了实现全自动"开发-部署-测试"
+循环所需的基础能力：EPLAN 应用生命周期控制（`eplan_app_launch` /
+`eplan_app_shutdown` / `eplan_app_restart` —— 退出 EPLAN、替换插件
+DLL、重新启动、重新连接、重新打开项目）、从模板克隆出的一次性
+scratch 项目（`eplan_scratch_project_*`）、读取 EPLAN 系统消息树
+（`eplan_get_system_messages` —— 查看用户在界面上看到的同样的
+错误/警告），以及私有扩展模块（见下文）。完整的工具清单见
+[项目 Wiki](https://github.com/covagashi/eplan-rag-mcp/wiki)。
 
 EPLAN 版本会被**自动检测**：服务器会扫描
 `C:\Program Files\EPLAN\Platform` 并选用已安装的最新版本，
