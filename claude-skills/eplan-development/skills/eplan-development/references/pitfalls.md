@@ -85,6 +85,20 @@ catch (Exception ex)
 - In batch loops (parts DB scans, page iterations): catch per item, log the item id, continue.
 - In interactive scripts: `MessageBox.Show(ex.Message, "Error", ...)` is acceptable; never in headless paths.
 
+**Reading the message tree back:** `BaseException` does *not* have a `.Level` property (CS1061 if you try it) — the real one is `.MessageLevel`, returning `Eplan.EplApi.Base.MessageLevel` (`Message`/`Warning`/`Error`/`FatalError`) per entry:
+
+```csharp
+var col = new SysMessagesCollection(0, MessageLevel.Message); // 0 = no bookmark filter
+var it = col.GetSysMsgEnumerator();
+while (it.MoveNext())
+{
+    var m = it.Current as BaseException;   // Current is object - cast first, CS1061 otherwise
+    if (m != null)
+        Console.WriteLine($"{m.MessageLevel}: {m.Message} (x{m.NumberOfOccurrences})");
+}
+```
+`NumberOfOccurrences` collapses consecutive *identical* messages EPLAN joined into one tree item — don't rely on it as a reliable dedup count, it stayed `1` for messages fired back-to-back in a live test. Verified live 2026-09-01 against a running EPLAN 2025 instance.
+
 ## 5. Progress bars must always end
 
 `Progress.EndPart(true)` in `finally`, or EPLAN's UI is left with a stuck progress dialog. Check `Canceled()` inside loops when `SetAllowCancel(true)`.
