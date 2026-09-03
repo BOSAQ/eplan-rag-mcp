@@ -292,7 +292,14 @@ def diff_page(expected, actual, tolerance=COINCIDENCE_TOLERANCE_MM):
 
     if "placementCount" in expected:
         want = expected["placementCount"]
-        got = len(act_placements)
+        # Prefer the count the READER reported over the length of the list it
+        # returned. Those differ whenever a read was truncated by `limit` or
+        # narrowed by `types`, and comparing against the list length then
+        # reports a mismatch that is an artefact of the read rather than a fact
+        # about the page.
+        got = actual.get("placementCount")
+        if got is None:
+            got = len(act_placements)
         if want != got:
             diffs.append("placementCount: expected %s, found %s" % (want, got))
 

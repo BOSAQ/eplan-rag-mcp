@@ -71,6 +71,7 @@ Traps that cost real debugging time, all encoded below:
     primitive #1 rather than an afterthought.
 """
 
+import re
 import uuid
 
 from ._base import cs_escape
@@ -79,6 +80,7 @@ from .scripted import _execute_script
 from .fixtures import SCRATCH_ROOT
 from .schematic_model import (
     SchematicValueError,
+    diff_page,
     cs_bool,
     cs_double,
     cs_int,
@@ -97,6 +99,8 @@ __all__ = [
     "live_connect_pins",
     "live_read_page",
     "live_remove_placement",
+    "live_verify_page",
+    "live_set_device_tag",
 ]
 
 
@@ -393,6 +397,48 @@ def _guard_prelude(allow_real):
     )
 
 
+def _fill(template, **values):
+    """
+    Substitute placeholder tokens into a C# template in ONE pass.
+
+    Chained `.replace()` calls are unsafe here, and not theoretically: a page
+    named "+TAGTEST/610" was substituted for PAGENAME, and the later TAG
+    substitution then rewrote "TAGTEST" INSIDE the value just inserted, emitting
+    `+"-K1"TEST/610` and a CS0103 that surfaced only as a timeout. Any caller
+    value containing a token name does the same - a library called "SNAP", a
+    page called "TOP".
+
+    Two properties make that impossible:
+
+      - ONE PASS: text inserted by this substitution is never re-scanned, so a
+        value cannot be corrupted by a later token.
+      - WORD BOUNDARIES: LIB cannot match inside LIBNAME, and AX cannot match
+        inside a longer identifier.
+
+    A token left unsubstituted raises, rather than shipping a script with a bare
+    identifier in it - which is the same CS0103 by a slower route.
+    """
+    if not values:
+        return template
+    alternation = "|".join(sorted((re.escape(k) for k in values),
+                                  key=len, reverse=True))
+    pattern = re.compile(r"\b(" + alternation + r")\b")
+
+    # Check the TEMPLATE, before substituting. Scanning the OUTPUT cannot work:
+    # a caller value may legitimately contain a token name - a library actually
+    # called "LIB", a page called "TAGTEST" - and that is indistinguishable
+    # afterwards from a token that was never filled. Which is precisely the
+    # confusion this function exists to remove, so re-introducing it here would
+    # be self-defeating.
+    missing = sorted(k for k in values if not re.search(r"\b%s\b" % re.escape(k), template))
+    if missing:  # pragma: no cover - a template/caller mismatch is a bug
+        raise RuntimeError(
+            "Placeholder(s) %s were supplied but do not appear in the template; "
+            "the template and its caller have drifted apart." % missing
+        )
+    return pattern.sub(lambda m: values[m.group(1)], template)
+
+
 def _shape(raw, timeout_hint=None):
     """
     Flatten _execute_script's envelope into one dict, and never report success
@@ -607,8 +653,9 @@ def live_symbol_catalog(library: str = None, symbol: str = None,
             results["depth"] = 2;
             results["next"] = "A symbol with connectionPoints >= 2 can be wired. " +
                 "Call again with symbol=<name> for its variants and pin geometry.";
-'''.replace("LIB", '"%s"' % lib_cs).replace("CONTAINS", '"%s"' % contains_cs) \
-   .replace("LIMIT", str(limit))
+'''
+        body = _fill(body, LIB='"%s"' % lib_cs,
+                     CONTAINS='"%s"' % contains_cs, LIMIT=str(limit))
     else:
         body = '''            Type libType = FindType("Eplan.EplApi.DataModel.MasterData.SymbolLibrary");
             Type symType = FindType("Eplan.EplApi.DataModel.MasterData.Symbol");
@@ -671,7 +718,8 @@ def live_symbol_catalog(library: str = None, symbol: str = None,
             results["note"] = "Pin 'raw' values here are relative to the symbol's " +
                 "insertion point - an unplaced symbol has no page coordinate. " +
                 "live_place_symbol reports absolute pins once it is placed.";
-'''.replace("LIB", '"%s"' % lib_cs).replace("SYM", '"%s"' % sym_cs)
+'''
+        body = _fill(body, LIB='"%s"' % lib_cs, SYM='"%s"' % sym_cs)
 
     raw = _execute_script(
         _script(_cls("SymCat"), body, extra_helpers=_HELPERS_SCHEMATIC),
@@ -798,7 +846,7 @@ def live_create_page(plant: str = None, location: str = None, counter: int = 1,
             if (size != null) results["size"] = PtDict(size);
             results["page_after"] = ReadPage(page, 50, false, null);
 '''
-    body = body.replace("PAGETYPE", '"%s"' % cs_escape(page_type))
+    body = _fill(body, PAGETYPE='"%s"' % cs_escape(page_type))
 
     raw = _execute_script(
         _script(_cls("MkPage"), body, extra_helpers=_HELPERS_SCHEMATIC),
@@ -951,16 +999,18 @@ def live_place_symbol(page: str, library: str, symbol: str, x: float, y: float,
                 "its name is '+' until one is assigned. That is expected.";
             results["page_after"] = ReadPage(page, 200, true, null);
 '''
-    body = (body
-            .replace("PAGENAME", '"%s"' % page_cs)
-            .replace("LIBNAME", '"%s"' % lib_cs)
-            .replace("SYMNAME", '"%s"' % sym_cs)
-            .replace("X2VAL", x2_cs if x2_cs is not None else x_cs)
-            .replace("Y2VAL", y2_cs if y2_cs is not None else y_cs)
-            .replace("XVAL", x_cs)
-            .replace("YVAL", y_cs)
-            .replace("VARNR", str(variant_nr))
-            .replace("SNAP", cs_bool(snap_to_grid)))
+    body = _fill(
+        body,
+        PAGENAME='"%s"' % page_cs,
+        LIBNAME='"%s"' % lib_cs,
+        SYMNAME='"%s"' % sym_cs,
+        X2VAL=x2_cs if x2_cs is not None else x_cs,
+        Y2VAL=y2_cs if y2_cs is not None else y_cs,
+        XVAL=x_cs,
+        YVAL=y_cs,
+        VARNR=str(variant_nr),
+        SNAP=cs_bool(snap_to_grid),
+    )
 
     raw = _execute_script(
         _script(_cls("Place"), body, extra_helpers=_HELPERS_SCHEMATIC),
@@ -1050,12 +1100,14 @@ def live_connect_pins(page: str, from_handle: str, from_pin: int,
             results["to"] = rb;
             results["page"] = PropText(page, "Name");
 '''
-    probe_body = (probe_body
-                  .replace("PAGENAME", '"%s"' % page_cs)
-                  .replace("FROMH", '"%s"' % from_cs)
-                  .replace("TOH", '"%s"' % to_cs)
-                  .replace("FROMP", str(from_pin))
-                  .replace("TOP", str(to_pin)))
+    probe_body = _fill(
+        probe_body,
+        PAGENAME='"%s"' % page_cs,
+        FROMH='"%s"' % from_cs,
+        TOH='"%s"' % to_cs,
+        FROMP=str(from_pin),
+        TOP=str(to_pin),
+    )
     probe = _shape(_execute_script(
         _script(_cls("PinProbe"), probe_body, extra_helpers=_HELPERS_SCHEMATIC),
         timeout=timeout_seconds,
@@ -1107,12 +1159,14 @@ def live_connect_pins(page: str, from_handle: str, from_pin: int,
             results["line"] = DumpPlacement(dcl, false);
             results["page_after"] = ReadPage(page, 200, true, null);
 '''
-    body = (body
-            .replace("PAGENAME", '"%s"' % page_cs)
-            .replace("AX", cs_double(pa["x"], "from x"))
-            .replace("AY", cs_double(pa["y"], "from y"))
-            .replace("BX", cs_double(pb["x"], "to x"))
-            .replace("BY", cs_double(pb["y"], "to y")))
+    body = _fill(
+        body,
+        PAGENAME='"%s"' % page_cs,
+        AX=cs_double(pa["x"], "from x"),
+        AY=cs_double(pa["y"], "from y"),
+        BX=cs_double(pb["x"], "to x"),
+        BY=cs_double(pb["y"], "to y"),
+    )
 
     out = _shape(_execute_script(
         _script(_cls("Connect"), body, extra_helpers=_HELPERS_SCHEMATIC),
@@ -1217,11 +1271,13 @@ def live_read_page(page: str, include_pins: bool = True, limit: int = 200,
             foreach (KeyValuePair<string, object> kv in state) results[kv.Key] = kv.Value;
             results["handle"] = Handle(page);
 '''
-    body = (body
-            .replace("PAGENAME", '"%s"' % page_cs)
-            .replace("LIMIT", str(limit))
-            .replace("ONLYTYPES", only)
-            .replace("WITHPINS", cs_bool(include_pins)))
+    body = _fill(
+        body,
+        PAGENAME='"%s"' % page_cs,
+        LIMIT=str(limit),
+        ONLYTYPES=only,
+        WITHPINS=cs_bool(include_pins),
+    )
 
     out = _shape(_execute_script(
         _script(_cls("ReadPage"), body, extra_helpers=_HELPERS_SCHEMATIC),
@@ -1302,7 +1358,8 @@ def live_remove_placement(page: str, handle: str = None,
                 throw new Exception("Refusing to remove: handle resolves to a " +
                     target.GetType().Name + ", but expect_type was " + EXPECTTYPE +
                     ". Handles are session-scoped; re-read the page.");
-'''.replace("EXPECTTYPE", '"%s"' % expect_cs)
+'''
+            expect_block = _fill(expect_block, EXPECTTYPE='"%s"' % expect_cs)
         body = _guard_prelude(allow_real_project) + '''
             object page = FindPage(project, PAGENAME);
             object target = ResolveOnPage(page, HANDLE);
@@ -1313,10 +1370,236 @@ def live_remove_placement(page: str, handle: str = None,
             Call(rm, target, null);
             results["page_after"] = ReadPage(page, 200, false, null);
 '''
-        body = body.replace("HANDLE", '"%s"' % handle_cs)
-    body = body.replace("PAGENAME", '"%s"' % page_cs)
+        body = _fill(body, HANDLE='"%s"' % handle_cs)
+    body = _fill(body, PAGENAME='"%s"' % page_cs)
 
     return _shape(_execute_script(
         _script(_cls("Remove"), body, extra_helpers=_HELPERS_SCHEMATIC),
         timeout=timeout_seconds,
     ))
+
+
+# ---------------------------------------------------------------------------
+# 7. Verify a page against an expectation
+# ---------------------------------------------------------------------------
+
+def live_verify_page(page: str, expected: dict, tolerance: float = 0.05,
+                     timeout_seconds: float = 90.0) -> dict:
+    """
+    Check a page against a description of what it SHOULD contain.
+
+    This is what turns the primitives from append-only into something that can
+    CONVERGE. Without it a caller can add to a page but has no way to state a
+    target and be told exactly what does not match, so "did what I intended
+    land?" stays an eyeball job over a large JSON dump.
+
+    `expected` is written in live_read_page's OWN schema, as a SUBSET. That is
+    the point: the read format doubles as the specification format, so there is
+    no second vocabulary to learn and a verification is just "re-read, then
+    compare". Copy a read result, cut it down to what you care about, and it is
+    a valid expectation.
+
+    Only keys present in `expected` are compared. Everything else is ignored, so
+    you can assert on one device's position without describing the whole page.
+
+    Reads only - nothing is modified.
+
+    Args:
+        page: Page name.
+        expected: A subset of a live_read_page result. Recognised keys:
+            "placementCount" - exact number of placements on the page.
+            "placements"     - a list of partial placement records, each matched
+                               by "handle" if given, otherwise by "clrType" +
+                               "location" + "name", whichever are present.
+            A placement record may carry "clrType", "name", "handle" and
+            "location" ({"x", "y"}).
+        tolerance: Millimetres within which two coordinates count as equal
+            (default 0.05 - deliberately under half a grid step, so devices on
+            ADJACENT grid points are never treated as the same place).
+        timeout_seconds: Default 90s.
+
+    Returns:
+        {"success", "match": bool, "differences": [str, ...], "page_state"}
+
+        "differences" names each mismatch in the caller's own terms - what was
+        expected and what was found - so a failed verification says what to fix
+        rather than only that something is wrong. "page_state" is the full read
+        the comparison ran against, so no second call is needed for context.
+
+    Example:
+        live_verify_page("+MCP/1", {
+            "placementCount": 3,
+            "placements": [{"clrType": "Function",
+                            "location": {"x": 60.325, "y": 200.025}}],
+        })
+    """
+    try:
+        cs_text(page, "page")
+        tolerance = float(tolerance)
+    except (SchematicValueError, TypeError, ValueError) as exc:
+        return _err(exc)
+    if not isinstance(expected, dict):
+        return {"success": False,
+                "error": "expected must be a dict written in live_read_page's "
+                         "schema - e.g. {'placementCount': 3}. Got %s."
+                         % type(expected).__name__}
+    if not expected:
+        return {"success": False,
+                "error": "expected is empty, so this would trivially pass and "
+                         "tell you nothing. State at least one thing to check, "
+                         "e.g. {'placementCount': N}."}
+
+    state = live_read_page(page, include_pins=False, limit=1000,
+                           timeout_seconds=timeout_seconds)
+    if not state.get("success"):
+        return state
+
+    result = diff_page(expected, state, tolerance=tolerance)
+    out = {
+        "success": True,
+        "match": result["match"],
+        "differences": result["differences"],
+        "page": state.get("page"),
+        "page_state": state,
+    }
+    if state.get("truncated"):
+        # A truncated read could turn a present placement into a false "missing".
+        out["caution"] = (
+            "The page read was truncated at %s of %s placements, so a reported "
+            "difference may be an artefact of the cut-off rather than a real "
+            "mismatch." % (state.get("returned"), state.get("placementCount"))
+        )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 8. Give a placed device its tag
+# ---------------------------------------------------------------------------
+
+def live_set_device_tag(page: str, handle: str, tag: str,
+                        allow_merge: bool = False,
+                        allow_real_project: bool = False,
+                        timeout_seconds: float = 90.0) -> dict:
+    """
+    Give a placed function its device tag. WRITES - scratch-only by default.
+
+    A function placed by live_place_symbol is ANONYMOUS: its name is "+" until a
+    tag is assigned (measured on 2027). An anonymous device looks placed in the
+    GED but is invisible to every name-addressed tool - live_query_functions,
+    live_set_function_text, search_devices - so placing and tagging are two
+    steps, and only the first existed before this.
+
+    DUPLICATE TAGS ARE REFUSED BY DEFAULT, and that default is the point.
+    Assigning a tag that already exists does not error in EPLAN: it MERGES this
+    function into that device as a further sub-function. For a contactor's coil
+    and its contacts that is exactly right; for a model reusing a tag by
+    accident it silently rewires the schematic. So the safe reading is the
+    default and the useful one is opt-in.
+
+    Args:
+        page: Page the function is on.
+        handle: Handle from live_place_symbol or live_read_page. Session-scoped.
+        tag: The device tag, e.g. "-K1", "+1162-MA1", "=AP+ST1-Q2". Written to
+            Function.Name, which reflection on 2027 reports as directly
+            writable. The result reports the name EPLAN actually stored, since
+            project structure settings can reformat it.
+        allow_merge: Permit a tag already present on this page, merging this
+            function into that device. Default False.
+        allow_real_project: Must be True to write outside the scratch root.
+        timeout_seconds: Default 90s.
+
+    Returns:
+        {"success", "page", "handle", "requestedTag", "name" (as EPLAN stored
+         it), "merged", "route", "placement", "page_after"}
+
+        "route" names which write path succeeded, so the first live run on a new
+        EPLAN version documents itself instead of leaving you guessing.
+    """
+    try:
+        page_cs = cs_escape(cs_text(page, "page"))
+        handle_cs = cs_escape(cs_text(handle, "handle"))
+        tag_cs = cs_escape(cs_text(tag, "tag"))
+    except SchematicValueError as exc:
+        return _err(exc)
+
+    body = _guard_prelude(allow_real_project) + '''
+            object page = FindPage(project, PAGENAME);
+            object target = ResolveOnPage(page, HANDLE);
+            if (target.GetType().Name != "Function")
+                throw new Exception("Only a Function can carry a device tag; " +
+                    "handle resolves to a " + target.GetType().Name + ".");
+
+            // A tag already in use MERGES this function into that device as a
+            // further sub-function. Correct for a coil + its contacts, wrong for
+            // a model that reused a tag by accident - so it is opt-in.
+            bool allowMerge = ALLOWMERGE;
+            List<string> clash = new List<string>();
+            foreach (object pl in PagePlacements(page))
+            {
+                if (pl == null || pl.GetType().Name != "Function") continue;
+                if (Handle(pl) == HANDLE) continue;
+                string n = PropText(pl, "Name");
+                if (n != null && n == TAG) clash.Add(Handle(pl));
+            }
+            results["merged"] = clash.Count > 0;
+            if (clash.Count > 0 && !allowMerge)
+                throw new Exception("Device tag " + TAG + " is already used on this " +
+                    "page by " + clash.Count + " other function(s) (" +
+                    string.Join(", ", clash.ToArray()) + "). Assigning it would MERGE " +
+                    "this function into that device as a sub-function - correct for a " +
+                    "contactor coil and its contacts, but a silent rewire when a tag " +
+                    "is reused by accident. Pass allow_merge=true if the merge is " +
+                    "intended, or choose a different tag.");
+
+            // Function.Name is directly writable (reflection on 2027 reports
+            // r=True w=True). Fall back to VisibleName and REPORT which route
+            // fired, so a future EPLAN version documents itself.
+            string route = null;
+            PropertyInfo nameProp = GetWritable(target.GetType(), "Name");
+            if (nameProp != null)
+            {
+                try { nameProp.SetValue(target, TAG, null); route = "Function.Name"; }
+                catch (Exception exName) { results["nameError"] = Flatten(exName); }
+            }
+            if (route == null)
+            {
+                PropertyInfo vis = GetWritable(target.GetType(), "VisibleName");
+                if (vis == null)
+                    throw new Exception("Function exposes neither a writable Name nor " +
+                        "VisibleName. " + MemberList(target.GetType(), false));
+                vis.SetValue(target, TAG, null);
+                route = "Function.VisibleName";
+            }
+            results["route"] = route;
+
+            // Read the stored name BACK: structure settings can reformat what was
+            // asked for, exactly as they do for page names.
+            results["page"] = PropText(page, "Name");
+            results["handle"] = Handle(target);
+            results["name"] = PropText(target, "Name");
+            results["visibleName"] = PropText(target, "VisibleName");
+            results["placement"] = DumpPlacement(target, false);
+            results["page_after"] = ReadPage(page, 200, false, new string[] { "Function" });
+'''
+    body = _fill(
+        body,
+        PAGENAME='"%s"' % page_cs,
+        HANDLE='"%s"' % handle_cs,
+        ALLOWMERGE=cs_bool(allow_merge),
+        TAG='"%s"' % tag_cs,
+    )
+
+    out = _shape(_execute_script(
+        _script(_cls("SetTag"), body, extra_helpers=_HELPERS_SCHEMATIC),
+        timeout=timeout_seconds,
+    ))
+    if out.get("success"):
+        out["requestedTag"] = tag
+        stored = out.get("name")
+        if stored and stored != tag:
+            out["note"] = (
+                "EPLAN stored the tag as %r rather than %r - project structure "
+                "settings reformat device tags. Use the stored name for later "
+                "name-addressed calls." % (stored, tag)
+            )
+    return out
