@@ -130,9 +130,20 @@ introspection (2025.0.3):
 ## Pitfalls
 
 - Do **not** put `using Eplan.EplApi.DataModel;` / `...DataModel.E3D;` /
-  `...HEServices;` in the script source. That is the exact CS0234 trap (and if
-  the MCP wrapper swallows the compile error you get a `success` file that never
-  appears).
+  `...HEServices;` in the script source. That is the exact CS0234 trap, and a
+  script that fails to compile never runs — it never reaches the line that
+  writes a result file. If the host driving the script (any runner, not just
+  the MCP one) works by polling for that file, a compile error looks
+  **identical to a hang**: you get a plain timeout, not a compiler message, on
+  the caller side. **Before spending time on RAM/size/locking theories for a
+  timed-out script, check EPLAN's own message tree first** (`SysMessagesCollection`,
+  see pitfalls.md #4) for a `CS####`-prefixed entry naming the generated `.cs`
+  file — that is where the real error is sitting the whole time. Confirmed
+  live (2026-09-03): the same script timed out identically against a
+  400-installation-space project and a 4-page one, with free RAM ranging
+  ~2–3 GB — none of that mattered, the cause was the `using` directive both
+  times. Collection size (hundreds of pages/spaces) is not itself a source of
+  slowness once a script actually compiles — enumeration is fast.
 - The EPLAN script engine also rejects modern C# syntax: index initializers
   (`new Dictionary<...> { ["k"] = v }`) / dictionary-initializer braces fail
   with CS1525 even where the same code compiles in VS. **Write `MethodInfo`/

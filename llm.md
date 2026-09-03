@@ -74,6 +74,23 @@ It exposes **214 tools** (full tool-by-tool reference: [the project wiki](https:
   of a template project; deletion is confined to the scratch root), and
   `eplan_get_system_messages` (read EPLAN's system message tree — the same
   errors/warnings the user sees in the GUI's system messages dialog).
+- **4 action-catalog tools** reaching the ~1,050 further EPLAN actions that
+  exist only as GUI buttons (mined from the install's `MFTools.xml`, not
+  documented, not individually wrapped — publishing one tool per action would
+  have tripled the tool count): `eplan_action_catalog(search, category,
+  documented_only, wrapped, available_only, limit)` to search the ~1,150-action
+  registry offline, `eplan_action_describe(name)` for a registry entry + live
+  `FindAction` probe, `eplan_action_run(name, params, dry_run,
+  allow_unknown_params)` for validated dispatch of *any* action (rejects
+  unknown names/params, with an escape hatch since many registry params are
+  observed rather than documented — supersedes `execute_raw_action` for
+  actions already in the registry), and `eplan_ribbon_catalog(tab, search)` to
+  browse the live GUI ribbon tree and resolve a button to the action it runs.
+  `available_only=True` on `action_catalog` restricts to actions the live
+  probe found registered on this installation — that is necessary, not
+  sufficient: `FindAction` resolving an action means its module is *loaded*,
+  not that it is *licensed* to run (module licensing is enforced at
+  execution time). Confirm by actually running the action.
 - **4 Asset Administration Shell tools** → `aas_<action>`
   (`aas_export_part`, `aas_export_project`, `aas_inspect_package`,
   `aas_import_parts`) for AAS/AASX digital-twin export and import.
@@ -196,6 +213,14 @@ All of these exist as `eplan_*` tools:
   `{{RESULT_PATH}}` as JSON. Raise `timeout_seconds` for scripts that walk
   large collections (e.g. reflection over every function/page in a big
   project); the default is tuned for small scripts, not bulk enumeration.
+  **If the call times out, don't assume the script is slow or the collection
+  is large** — a C# compile error (e.g. the `using Eplan.EplApi.DataModel;`
+  trap above) means the script never ran and never wrote a result, which is
+  indistinguishable from a hang on this end. Call
+  `eplan_get_system_messages(min_level="Message")` first and look for a
+  `CS####`-prefixed entry naming the generated `.cs` file before raising the
+  timeout or suspecting RAM/project size (confirmed live: identical timeout
+  on a 400-item and a 4-item project, same root cause both times).
 
 ---
 
