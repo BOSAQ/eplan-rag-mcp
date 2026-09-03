@@ -286,8 +286,16 @@ def _execute_script(script_content: str, timeout: float = 30.0) -> dict:
                 }
 
                 if compile_errors:
+                    cs_lines = [e for e in compile_errors if e.startswith("CS")]
+                    # CS0105 is "using directive appeared previously": EPLAN
+                    # pre-imports the namespaces every generated script also
+                    # declares, so it fires on almost every script and is
+                    # never the reason one failed. Keep it in compile_errors,
+                    # but don't let it crowd out the real error in the
+                    # one-line summary.
                     summary = " | ".join(
-                        [e for e in compile_errors if e.startswith("CS")]
+                        [e for e in cs_lines if not e.startswith("CS0105")]
+                        or cs_lines
                         or compile_errors
                     )
                     # Once the compiler is confirmed as the cause, `message`

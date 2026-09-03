@@ -344,3 +344,48 @@ def test_get_part_uses_generic_product_group(capture):
     script = capture["script"]
     assert "part.GenericProductGroup" in script
     assert "part.ProductTopGroup" not in script
+
+
+def test_cs0105_noise_does_not_crowd_out_the_real_error(fake_eplan, monkeypatch):
+    """EPLAN pre-imports the namespaces every generated script declares, so
+    CS0105 fires on nearly every script and never explains a failure. It
+    stays in compile_errors, but must not lead the summary line."""
+    def fake_messages(min_level="Warning", max_messages=100):
+        name = os.path.basename(fake_eplan.script_path)
+        return {
+            "success": True,
+            "messages": [
+                {"text": "Compile errors in script C:\gen\\" + name + " :"},
+                {"text": "CS0105 (Row:1, Column:7): The using directive for 'System' appeared previously"},
+                {"text": "CS0105 (Row:4, Column:7): The using directive for 'Eplan.EplApi.Scripting' appeared previously"},
+                {"text": "CS1525 (Row:12, Column:20): Invalid expression term '.'"},
+                {"text": "The script C:\gen\\" + name + " cannot be compiled."},
+            ],
+        }
+
+    monkeypatch.setattr(scripted, "get_system_messages", fake_messages)
+    result = scripted._execute_script("// never compiles", timeout=0.2)
+
+    assert result["message"] == "Script did not compile: CS1525 (Row:12, Column:20): Invalid expression term '.'"
+    # Still recorded in full for anyone who wants the raw tree.
+    assert sum("CS0105" in e for e in result["compile_errors"]) == 2
+
+
+def test_summary_falls_back_when_every_line_is_cs0105(fake_eplan, monkeypatch):
+    """If CS0105 is somehow all there is, report it rather than an empty
+    'Script did not compile: ' with no reason attached."""
+    def fake_messages(min_level="Warning", max_messages=100):
+        name = os.path.basename(fake_eplan.script_path)
+        return {
+            "success": True,
+            "messages": [
+                {"text": "Compile errors in script C:\gen\\" + name + " :"},
+                {"text": "CS0105 (Row:1, Column:7): The using directive for 'System' appeared previously"},
+                {"text": "The script C:\gen\\" + name + " cannot be compiled."},
+            ],
+        }
+
+    monkeypatch.setattr(scripted, "get_system_messages", fake_messages)
+    result = scripted._execute_script("// never compiles", timeout=0.2)
+
+    assert "CS0105" in result["message"]
