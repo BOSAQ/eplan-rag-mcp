@@ -11,8 +11,23 @@ def export_parts_list(
     format: str = None
 ) -> dict:
     """
-    Export parts list from project.
+    Export the project's raw parts data, for re-import or external processing.
     Action: partslist
+
+    Not the tool for a formatted deliverable. If the user wants a parts list
+    they will print, hand to a shop, or build from a template - a label
+    sheet, a titled and sorted list, an .xls someone reads - use
+    create_labels instead, which is template-driven and takes
+    config/filter/sort schemes. This tool emits the underlying data.
+
+    Args:
+        export_file: Output file path.
+        project_name: Project path. Ask the user rather than reusing a path
+            seen earlier in the conversation.
+        format: Output format. NOTE: EPLAN's own partslist action ignores
+            CONFIGSCHEME on TYPE:EXPORT, so there is no scheme parameter
+            here on purpose - if the user needs scheme-driven output, that is
+            another signal they want create_labels.
     """
     manager, error = _get_connected_manager()
     if error:

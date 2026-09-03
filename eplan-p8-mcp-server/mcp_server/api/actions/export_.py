@@ -25,10 +25,27 @@ def export_pdf_project(
     Export project to PDF format (with QuietMode - no dialogs).
     Action: export
 
+    WARNING - omitting export_scheme can silently change where the PDF goes.
+    Measured 2026-09-03 on EPLAN 2027.0.1, reproduced 3x: with export_scheme
+    omitted this returned {"success": true} and wrote "-1.pdf" instead of the
+    requested filename. Per EPLAN's docs an absent EXPORTSCHEME makes it use
+    "the most recently used" export scheme, and that scheme's own output
+    settings override EXPORTFILE's basename. Supplying a valid scheme honoured
+    the requested path exactly.
+
+    The fallback scheme is readable, so you do not have to guess: list the
+    schemes with settings_list_children("USER.PDFExportGUI.SCHEMAS") and read
+    which one EPLAN will fall back to with
+    settings_get_string("USER.PDFExportGUI.SCHEMAS.LastUsed"). Pass an
+    explicit export_scheme whenever the output filename matters, and verify
+    the file on disk afterwards rather than trusting success:true.
+
     Args:
-        export_file: Output PDF file path
+        export_file: Output PDF file path. The directory is honoured; the
+            basename can be overridden by the scheme (see WARNING above).
         project_name: Project path (optional)
-        export_scheme: PDF export scheme name
+        export_scheme: PDF export scheme name. Optional to EPLAN, but treat
+            it as required whenever you care about the output filename.
         black_white: 0=Color, 1=B&W, 2=Grayscale, 3=White Inverted
         language: Language code (e.g., "en_US")
         use_zoom: Enable zoom window for navigation
@@ -40,6 +57,13 @@ def export_pdf_project(
         export_model: Export 3D models along with pages
     """
     params = {
+        # PDFPROJECTSCHEME is correct and deliberate: API Reference/Actions/
+        # export.md lists no scheme-less project-PDF TYPE. ProjectAction.md's
+        # own example does show /TYPE:PDFPROJECT passed through to this
+        # action, so EPLAN's docs are self-inconsistent - do not "fix" this
+        # to PDFPROJECT on the strength of that example. The wrong-filename
+        # behaviour documented above comes from the absent EXPORTSCHEME, not
+        # from this TYPE.
         "TYPE": "PDFPROJECTSCHEME",
         "PROJECTNAME": project_name,
         "EXPORTFILE": export_file,
@@ -81,12 +105,23 @@ def export_pdf_pages(
     Export specific pages to PDF format (with QuietMode - no dialogs).
     Action: export
 
+    WARNING - same scheme hazard as export_pdf_project: with export_scheme
+    omitted EPLAN falls back to "the most recently used" export scheme, whose
+    output settings can override EXPORTFILE's basename while the call still
+    returns success:true. Also observed on a production project (2026-09-01),
+    where the written basename came from the scheme, not from the request, and
+    the caller only found out by listing the directory. Read the fallback with
+    settings_get_string("USER.PDFExportGUI.SCHEMAS.LastUsed"), pass an explicit
+    export_scheme when the filename matters, and check the file on disk.
+
     Args:
-        export_file: Output PDF file path
+        export_file: Output PDF file path. Directory honoured; basename can be
+            overridden by the scheme (see WARNING above).
         page_names: List of page names (e.g., ["=AP+ST1/2", "=AP+ST1/4"])
         page_identifiers: List of page identifiers from StorableObject.ToStringIdentifier()
         project_name: Project path (optional)
-        export_scheme: PDF export scheme name
+        export_scheme: PDF export scheme name. Optional to EPLAN, but treat as
+            required whenever you care about the output filename.
         black_white: 0=Color, 1=B&W, 2=Grayscale, 3=White Inverted
         language: Language code
         use_zoom: Enable zoom window
