@@ -137,30 +137,66 @@ MESSAGE_SCAN_CAP = 500
 # monkeypatching its sleep/time affects pytest itself.
 SCRIPT_RESULT_TIMEOUT_S = 30.0
 
+# The action-result contract, declared rather than implied.
+#
+# Written because not having it cost real money three times in one session: a
+# field was added and silently never reached the trace; a docstring pointed the
+# model at a field that did not exist; and a guard meant to catch the second
+# could not be written because there was no vocabulary to check names against.
+#
+# Each entry is (name, when_present, meaning). "when_present" is part of the
+# contract, not a note: a field that appears unconditionally is a tax on every
+# happy-path response, so anything diagnostic must be able to say when it stays
+# quiet. Keep this in sync when adding a field - the tests below fail if a
+# producer emits something undeclared.
+RESULT_FIELDS = (
+    # --- always present on a completed action
+    ("success", "always", "Whether EPLAN reported the action as succeeding. NOT proof of effect: several actions return true having done nothing, and at least one returned false after a completed overwrite."),
+    ("action", "on failures raised by this server", "The action string as sent."),
+    ("parameters", "when the action returned any", "Values read back out of the ActionCallingContext."),
+    ("executor", "always on the scripted path", 'Which executor ran it: "action" (ActionManager.FindAction + Action.Execute), "cli-fallback" (the action name did not resolve), "cli-legacy" (EPLAN_MCP_LEGACY_CLI=1), or "none" (it never ran).'),
+
+    # --- diagnostics
+    ("error", "when a cause is known", "Human-readable cause. Sourced either from the thrown exception chain or from ActionCallingContext.GetException()."),
+    ("errorType", "with error, when the cause was an exception", "The .NET type name, e.g. Eplan.EplApi.Base.BaseException."),
+    ("errorFrom", "with error, on the scripted path", '"context" if read from GetException() after execution, "throw" if the exception propagated. Provenance matters: errorType appeared in 0 of 1,463 logged actions before the context read landed, so the two channels have to stay distinguishable in the trace.'),
+    ("message", "on failures raised by this server", "Server-side explanation, kept verbatim for callers matching on the older strings."),
+    ("failedScriptPath", "when a generated script failed", "Where the generated C# was preserved, since the cleanup deletes the original and it is the only evidence of a compile error."),
+
+    # --- EPLAN's own messages
+    ("eplanMessages", "when EPLAN emitted any", "EPLAN's own text, severity-ranked then capped at MESSAGE_CAP. A list of strings."),
+    ("eplanMessagesTotal", "with eplanMessages", "How many EPLAN produced, from the collection's own Count plus anything only the per-call context supplied."),
+    ("eplanMessagesTruncated", "only when entries were dropped", "True when the cap discarded lower-severity entries."),
+    ("eplanMessagesLevels", "only when something outranks Message", "Per-entry severity, parallel to eplanMessages."),
+    ("eplanMessagesUnbounded", "only when the slice could not be bounded", "True when no end bookmark could be taken, so entries from outside this action may be included and the total is an upper bound."),
+    ("eplanMessagesFromContextOnly", "only when the context knew more", "How many messages came from ActionCallingContext.SysMessages but not the bookmark slice. Its presence is the evidence that would justify switching channels."),
+)
+
+# Fields the generated C# emits for the Python side to consume. They are
+# internal plumbing and must never survive into a response - a leak of exactly
+# this kind reached every no-message action before it was caught by running the
+# template against live EPLAN.
+INTERNAL_RESULT_FIELDS = (
+    "eplanMessagesRaw",
+    "eplanContextMessagesRaw",
+    "eplanMessagesScanned",
+    "eplanMessagesTrueTotal",
+    "eplanMessagesBounded",
+)
+
+RESULT_FIELD_NAMES = tuple(name for name, _, _ in RESULT_FIELDS)
+
 # Result keys copied into each actions.jsonl entry, on top of the always-present
 # ts / action / duration_s / success.
 #
-# READ THIS BEFORE ADDING A DIAGNOSTIC FIELD TO AN ACTION RESULT. This tuple is
-# a filter. A field that is not listed here never reaches the trace, so it
-# cannot be counted in a later audit - and the trace is the only record of what
-# this server actually did. Every audit finding about executor behaviour and
-# message truncation came out of these entries; a field absent from them is
-# invisible to the next one. test_log_action_offline.py fails if this tuple
-# changes without the expected set there being updated in the same commit.
-LOGGED_RESULT_KEYS = (
-    "executor",
-    "error",
-    "errorType",
-    "eplanMessages",
-    "eplanMessagesTotal",
-    "eplanMessagesTruncated",
-    "eplanMessagesLevels",
-    "eplanMessagesUnbounded",
-    "eplanMessagesFromContextOnly",
-    "errorFrom",
-    "message",
-    "failedScriptPath",
-)
+# Derived from RESULT_FIELDS rather than hand-maintained, which is the whole
+# point: this tuple is a FILTER, and a field missing from it never reaches the
+# trace and so cannot be measured in a later audit. Deriving it means adding a
+# field to the contract cannot forget the trace. "action" and "success" are
+# excluded because _log_action writes them itself; "parameters" because the
+# trace records intent, not the full echo.
+_NOT_LOGGED = ("success", "action", "parameters")
+LOGGED_RESULT_KEYS = tuple(n for n in RESULT_FIELD_NAMES if n not in _NOT_LOGGED)
 
 
 def eplan_pids() -> list:
@@ -439,11 +475,13 @@ class EPLANConnectionManager:
         # internal fields into the response of every action that produced no
         # messages at all, i.e. most of them. Caught by running the real
         # template against live EPLAN; the offline tests all supplied messages.
-        raw = result.pop("eplanMessagesRaw", None)
-        ctx_raw = result.pop("eplanContextMessagesRaw", None)
-        scanned = result.pop("eplanMessagesScanned", None)
-        true_total = result.pop("eplanMessagesTrueTotal", None)
-        bounded = result.pop("eplanMessagesBounded", None)
+        drained = {name: result.pop(name, None)
+                   for name in INTERNAL_RESULT_FIELDS}
+        raw = drained["eplanMessagesRaw"]
+        ctx_raw = drained["eplanContextMessagesRaw"]
+        scanned = drained["eplanMessagesScanned"]
+        true_total = drained["eplanMessagesTrueTotal"]
+        bounded = drained["eplanMessagesBounded"]
 
         if not isinstance(raw, list):
             raw = []
