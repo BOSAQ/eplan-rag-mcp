@@ -39,8 +39,14 @@ answer for:
 Notes on the generated C#, all of them load-bearing (see the pitfalls section
 of e3d-installation-spaces.md):
 - No `using Eplan.EplApi.DataModel;` / `...HEServices;` - that is the CS0234 trap.
-- No index initializers (`new Dictionary<..> { ["k"] = v }`): the script engine
-  rejects them with CS1525. Dictionary entries are separate statements.
+- Index initializers (`new Dictionary<..> { ["k"] = v }`) are written as separate
+  `d["k"] = v;` statements here by CONVENTION, not by necessity. This note used
+  to say the script engine rejects them with CS1525; that is NOT true on 2027 -
+  a direct probe compiled and ran exactly that form. Corrected rather than
+  removed because the false version was load-bearing in a debugging session: it
+  sent someone hunting for a syntax error when the real fault was elsewhere.
+  Separate statements are still preferred, since they keep a long dictionary
+  diffable line by line.
 - Every value interpolated into the script goes through cs_escape.
 - Reflective calls are wrapped and InnerException chains flattened, because
   EPLAN wraps the real failure in TargetInvocationException.
