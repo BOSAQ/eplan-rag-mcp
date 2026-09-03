@@ -6,8 +6,11 @@ These actions access internal EPLAN APIs that aren't available via standard acti
 - Settings: Typed settings (string, bool, int) with direct API
 - PathMap: Variable substitution
 
-EVERY generated script here must be valid **C# 5**. EPLAN's script engine
-compiles with a pre-C# 6 compiler, so all of these are syntax errors:
+EVERY generated script here must be valid **C# 5**. On EPLAN 2026 the
+script engine compiles with a pre-C# 6 compiler, so all of these are
+syntax errors (2027's engine is newer - it accepts at least the
+dictionary index initializer - but these tools target both, so write
+to the older floor):
     ?.  ?[]   null-conditional         -> use an explicit null check
     $"..."      string interpolation   -> use string.Format / concatenation
     { ["k"] = v }  dictionary index initializer -> assign after construction
@@ -500,8 +503,8 @@ public class PartsGet_{uuid.uuid4().hex[:6]}
                 if (part != null)
                 {{
                     // Plain assignment, not a dictionary index initializer:
-                    // that syntax is C# 6 and does not compile in EPLAN's
-                    // script engine.
+                    // that syntax is C# 6, and on 2026 it is a hard
+                    // CS1525 (2027 accepts it - write to the older floor).
                     var props = part.Properties;
                     var partDict = new Dictionary<string, object>();
                     partDict["PartNr"] = props.ARTICLE_PARTNR.ToString();
@@ -513,7 +516,14 @@ public class PartsGet_{uuid.uuid4().hex[:6]}
                     partDict["OrderNr"] = props.ARTICLE_ORDERNR.ToString();
                     partDict["ProductGroup"] = part.ProductGroup.ToString();
                     partDict["ProductSubGroup"] = part.ProductSubGroup.ToString();
-                    partDict["ProductTopGroup"] = part.ProductTopGroup.ToString();
+                    // GenericProductGroup, not ProductTopGroup: that is the
+                    // name of the enum TYPE, and MDPart has no member by it.
+                    // Reflection over MDPart on 2026 lists exactly three
+                    // group members - ProductGroup, ProductSubGroup and
+                    // GenericProductGroup (whose type is ProductTopGroup).
+                    // Getting this wrong is CS1061, i.e. another silent
+                    // timeout.
+                    partDict["ProductTopGroup"] = part.GenericProductGroup.ToString();
 
                     results["success"] = true;
                     results["found"] = true;
