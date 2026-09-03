@@ -123,6 +123,23 @@ def _execute_script(script_content: str, timeout: float = 30.0) -> dict:
         with open(result_path, "r", encoding="utf-8") as f:
             results = json.load(f)
 
+        # A script that CAUGHT its own exception still writes a result file, so
+        # "the file exists" is not the same as "the operation worked". Returning
+        # a bare success:True here made every such failure look like a success
+        # with the real error buried one level down in results["error"] - which
+        # a model reads as "it worked".
+        #
+        # So the envelope inherits the script's own verdict when it stated one.
+        # The shape is unchanged (results is still nested), and a script that
+        # reports nothing is still treated as success, so callers that only look
+        # at the outer flag now see failures they previously missed, and callers
+        # that read results["..."] are unaffected.
+        if isinstance(results, dict) and results.get("success") is False:
+            return {
+                "success": False,
+                "error": results.get("error") or "the script reported failure",
+                "results": results,
+            }
         return {"success": True, "results": results}
 
     except Exception as e:
