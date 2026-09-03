@@ -7,8 +7,14 @@ Every action executes inside a C# script under QuietMode
 """
 
 from typing import Optional
+import re
 import sys
 import os
+
+# A bare EPLAN parameter name. Deliberately the same character class as EPLAN's
+# own command-line parse regex, /([a-zA-Z0-9_]+):(...), so a key this accepts is
+# a key EPLAN would read back as one parameter and nothing more.
+_PARAM_KEY_RE = re.compile(r"^[A-Za-z0-9_]+$")
 
 # Add parent directory to path for imports
 mcp_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -65,6 +71,20 @@ def _build_action(action_name: str, **params) -> str:
     """
     parts = [action_name]
     for key, value in params.items():
+        # The KEY side needs the same protection as the value side. Values are
+        # checked for a quote below, but the key was interpolated straight into
+        # f"/{key}:{value}" - and Python's **kwargs accepts any string, including
+        # non-identifiers. So a key of 'PROJECTNAME:C:/x.elk /ScriptFile' smuggled
+        # in a whole second parameter that the registry never listed, which is
+        # precisely what the value-side check exists to prevent.
+        # ^[A-Za-z0-9_]+$ is the same character class EPLAN's own parse regex
+        # accepts for a parameter name, so nothing legitimate is lost.
+        if not _PARAM_KEY_RE.match(str(key)):
+            raise ValueError(
+                f'Refusing to build action {action_name!r}: parameter name '
+                f'{key!r} is not a bare EPLAN parameter name. Names must match '
+                f'[A-Za-z0-9_]+ - anything else could inject a second /PARAM.'
+            )
         if value is not None and value != "":
             if isinstance(value, bool):
                 value = "1" if value else "0"

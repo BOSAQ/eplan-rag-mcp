@@ -427,13 +427,38 @@ export default {
 // --- Auth ---
 
 function checkAuth(request: Request, env: Env): Response | null {
-  if (!env.WORKER_API_KEY) return null;
+  // Fail CLOSED. `if (!env.WORKER_API_KEY) return null` treated a missing secret
+  // as "authorized", so a deploy that never set the secret - or one where it was
+  // renamed, emptied or rotated away - left the write endpoint open to anyone,
+  // with CORS `*` so a browser could reach it too. Anything written here is later
+  // served to an MCP client and read by a model that holds local code-execution
+  // tools, which makes an unauthenticated write a prompt-injection channel.
+  if (!env.WORKER_API_KEY) {
+    return json(
+      { error: "Unauthorized: server is missing WORKER_API_KEY" },
+      401
+    );
+  }
   const auth = request.headers.get("Authorization");
-  if (auth === `Bearer ${env.WORKER_API_KEY}`) return null;
+  if (timingSafeEqual(auth ?? "", `Bearer ${env.WORKER_API_KEY}`)) return null;
   return json(
     { error: "Unauthorized. Set Authorization: Bearer <WORKER_API_KEY>" },
     401
   );
+}
+
+/**
+ * Constant-time string compare, so a caller cannot recover the token one byte
+ * at a time by measuring how long `===` takes to reject it.
+ */
+function timingSafeEqual(a: string, b: string): boolean {
+  const ab = new TextEncoder().encode(a);
+  const bb = new TextEncoder().encode(b);
+  // Length is not secret, but bail before the loop so we never index past an end.
+  if (ab.length !== bb.length) return false;
+  let diff = 0;
+  for (let i = 0; i < ab.length; i++) diff |= ab[i] ^ bb[i];
+  return diff === 0;
 }
 
 // --- REST handlers ---

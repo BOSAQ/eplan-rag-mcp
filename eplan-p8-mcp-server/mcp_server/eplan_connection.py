@@ -160,12 +160,20 @@ class EPLANConnectionManager:
     DEFAULT_HOST = "localhost"
     TIMEOUT_SECONDS = 10
 
+    # Hosts treated as "this workstation". EPLAN remoting has no authentication,
+    # so connecting anywhere else is a trust decision, not a configuration
+    # detail: whoever runs that EPLAN sees every project this session touches
+    # and every action it runs. Kept as a set so get_status() and the action
+    # trace can both label the target.
+    LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", ""})
+
     def __init__(self, target_version: str = None):
         # target_version: EPLAN major version like "2026".
         # None = auto-detect (newest installed version).
         self.target_version = str(target_version) if target_version else None
         self.client = None
         self.connected = False
+        self.host = self.DEFAULT_HOST
         self.port = self.DEFAULT_PORT
         self.last_error = ""
         # Lazy: DLLs load on first use so tools like eplan_versions can run
@@ -313,23 +321,40 @@ class EPLANConnectionManager:
             timeout = System.TimeSpan.FromSeconds(self.TIMEOUT_SECONDS)
             last_exc = None
             for candidate in candidates:
+                # `client` is disposed on EVERY path except the one where it is
+                # handed to self.client. Previously Dispose() ran only when
+                # Connect succeeded AND Ping returned False, so the ordinary
+                # wrong-port case - Connect throwing - dropped a CLR remoting
+                # client (and its gRPC channel) undisposed. Across the reconnect
+                # retries the docstrings encourage and repeated app_launch
+                # cycles, those accumulate for the life of the MCP process.
+                client = None
+                keep = False
                 try:
                     logger.info(f"Connecting to {host}:{candidate}...")
                     client = EplanRemoteClient()
                     client.Connect(host, candidate, timeout)
                     if client.Ping():
                         self.client = client
+                        self.host = host
                         self.port = candidate
                         self.connected = True
+                        keep = True
                         logger.info(f"Connected to EPLAN at {host}:{candidate}")
                         return {
                             "success": True,
                             "message": f"Connected to EPLAN at {host}:{candidate}",
+                            "host": host,
                             "port": candidate
                         }
-                    client.Dispose()
                 except Exception as exc:
                     last_exc = exc
+                finally:
+                    if client is not None and not keep:
+                        try:
+                            client.Dispose()
+                        except Exception:
+                            pass
             if last_exc is not None:
                 raise last_exc
             return {"success": False, "message": "Connected but ping failed"}
@@ -367,6 +392,13 @@ class EPLANConnectionManager:
             os.makedirs(log_dir, exist_ok=True)
             entry = {
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                # WHERE the action ran. Without this the trace for an action
+                # against a remote, unauthenticated EPLAN is byte-identical to
+                # one against localhost, so a reviewer cannot tell the session
+                # ever left this workstation. Only recorded, never used to
+                # decide anything.
+                "host": self.host,
+                "port": self.port,
                 "action": action,
                 "duration_s": round(time.time() - started, 3),
                 "success": result.get("success"),
@@ -737,11 +769,21 @@ public class QuietExecute_{exec_id}
             return {"success": False, "message": f"Disconnect failed: {e}"}
 
     def get_status(self) -> dict:
-        """Get current connection status."""
+        """
+        Get current connection status.
+
+        "host" is reported because EPLAN remoting is UNAUTHENTICATED and this
+        manager is a process-wide singleton: once something retargets it at
+        another machine, every later action runs there. Without the host in the
+        status (and in the action trace) neither the user nor a post-incident
+        reviewer could tell a session had left the workstation.
+        """
         return {
             "connected": self.connected,
             "api_loaded": self._clr_initialized,
             "target_version": self.target_version,
+            "host": self.host if self.connected else None,
+            "is_local": (self.host in self.LOCAL_HOSTS) if self.connected else None,
             "port": self.port if self.connected else None,
             "last_error": self.last_error
         }
