@@ -5,6 +5,18 @@ These actions access internal EPLAN APIs that aren't available via standard acti
 - MDPartsManagement: Direct parts database access
 - Settings: Typed settings (string, bool, int) with direct API
 - PathMap: Variable substitution
+
+EVERY generated script here must be valid **C# 5**. EPLAN's script engine
+compiles with a pre-C# 6 compiler, so all of these are syntax errors:
+    ?.  ?[]   null-conditional         -> use an explicit null check
+    $"..."      string interpolation   -> use string.Format / concatenation
+    { ["k"] = v }  dictionary index initializer -> assign after construction
+    nameof(x), expression-bodied members, auto-property initializers
+A compile error is invisible from here: ExecuteScript still reports success,
+the script never runs, and the only symptom is that the result file never
+appears - i.e. it looks exactly like a hung EPLAN. `_execute_script` now
+reads EPLAN's message tree on timeout and reports the real CS#### error;
+see `_compile_errors_for`.
 """
 
 import os
@@ -47,6 +59,115 @@ def _ensure_dirs():
     """Ensure script and results directories exist."""
     os.makedirs(SCRIPT_DIR, exist_ok=True)
     os.makedirs(RESULTS_DIR, exist_ok=True)
+
+
+# Friendly names callers reasonably reach for, mapped to the real parts-DB
+# property. Anything not listed is passed through untouched, so raw
+# ARTICLE_* names and MDPart members ("PartNr") keep working.
+_PARTS_PROP_ALIASES = {
+    "Description1": "ARTICLE_DESCR1",
+    "Description2": "ARTICLE_DESCR2",
+    "Description3": "ARTICLE_DESCR3",
+    "Descr1": "ARTICLE_DESCR1",
+    "Manufacturer": "ARTICLE_MANUFACTURER",
+    "ManufacturerName": "ARTICLE_MANUFACTURER_NAME",
+    "Supplier": "ARTICLE_SUPPLIER",
+    "OrderNr": "ARTICLE_ORDERNR",
+    "PartNumber": "ARTICLE_PARTNR",
+    "ERPNr": "ARTICLE_ERPNR",
+}
+
+
+def _resolve_prop_name(name: str) -> str:
+    """Map a friendly property name to its parts-DB name; pass others through."""
+    return _PARTS_PROP_ALIASES.get(name, name)
+
+
+# C# 5 helpers for reading/writing parts-database properties by NAME, shared
+# by every parts_db_* script below. Interpolated into f-string templates, so
+# the braces here are single (interpolated values are not re-scanned).
+_PARTS_PROP_HELPERS_CS = """
+    // Each ARTICLE_* member is declared TWICE on
+    // MDPartsDatabaseItemPropertyList - once parameterless, once taking an
+    // int index (for multi-value properties like ARTICLE_CUSTOM_DATA_VALUE).
+    // A plain GetProperty(name) therefore throws AmbiguousMatchException for
+    // every property, so ask for the non-indexed overload explicitly.
+    static System.Reflection.PropertyInfo FindProp(object propList, string name)
+    {
+        return propList.GetType().GetProperty(
+            name,
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
+            null, null, Type.EmptyTypes, null);
+    }
+
+    static bool ReadProp(object propList, string name, out string value)
+    {
+        value = "";
+        var pi = FindProp(propList, name);
+        if (pi == null) return false;
+        var v = pi.GetValue(propList, null);
+        value = v == null ? "" : v.ToString();
+        return true;
+    }
+
+    // Returns null on success, else why it failed. The setter takes an
+    // MDPropertyValue and MDPropertyValue has only a default constructor -
+    // the string -> MDPropertyValue conversion that works in source is
+    // compile-time only, invisible to SetValue, which would throw
+    // ArgumentException on a bare string.
+    static string WriteProp(object propList, string name, string value)
+    {
+        var pi = FindProp(propList, name);
+        if (pi == null) return "property not found";
+        var pv = new MDPropertyValue();
+        pv.Set(value);
+        pi.SetValue(propList, pv, null);
+        return null;
+    }
+"""
+
+
+# Reading EPLAN's message tree to explain a timeout itself runs a script.
+# This flag keeps that diagnostic from recursing if IT times out too.
+_collecting_diagnostics = False
+
+
+def _compile_errors_for(script_path: str) -> list:
+    """
+    Ask EPLAN why a script produced no result file.
+
+    EPLAN's script engine reports compile failures only to its own
+    system-message tree: the remote ExecuteScript call still returns success
+    in well under a second, the script never runs, and the sole symptom here
+    is the result file never appearing. So on timeout, go read the tree.
+
+    Returns the messages EPLAN logged against this script file (its
+    "compile errors in <file>:" header, the CS#### lines, and the
+    "<file> cannot be compiled" footer), oldest first - or [] if EPLAN
+    logged none, which means a genuine timeout: the script compiled and is
+    still running, or it died without writing its result.
+    """
+    global _collecting_diagnostics
+    if _collecting_diagnostics:
+        return []
+    _collecting_diagnostics = True
+    try:
+        res = get_system_messages(min_level="Error", max_messages=200)
+        if not res.get("success"):
+            return []
+        # The generated file name carries a per-execution uuid, so matching on
+        # it cannot pick up messages from an earlier script.
+        basename = os.path.basename(script_path)
+        texts = [m.get("text", "") for m in res.get("messages") or []]
+        marked = [i for i, t in enumerate(texts) if basename in t]
+        if not marked:
+            return []
+        return texts[marked[0]:marked[-1] + 1]
+    except Exception:
+        # A diagnostic must never turn a timeout into a different failure.
+        return []
+    finally:
+        _collecting_diagnostics = False
 
 
 def _execute_script(script_content: str, timeout: float = 30.0) -> dict:
@@ -110,9 +231,24 @@ def _execute_script(script_content: str, timeout: float = 30.0) -> dict:
         start_time = time.time()
         while not os.path.exists(result_path):
             if time.time() - start_time > timeout:
+                # Far and away the most common cause is a C# compile error,
+                # which EPLAN reports to its own message tree and not to us.
+                # Say so, instead of blaming a timeout EPLAN never had.
+                compile_errors = _compile_errors_for(script_path)
+                if compile_errors:
+                    cs_lines = [e for e in compile_errors if e.startswith("CS")]
+                    return {
+                        "success": False,
+                        "message": "Script did not compile: "
+                                   + " | ".join(cs_lines or compile_errors),
+                        "compile_errors": compile_errors,
+                    }
                 return {
                     "success": False,
-                    "message": "Timeout waiting for script results",
+                    "message": f"Timeout waiting for script results after "
+                               f"{timeout:g}s (EPLAN logged no compile error "
+                               f"for this script, so it compiled and either is "
+                               f"still running or died without writing)",
                 }
             time.sleep(0.1)
 
@@ -155,13 +291,23 @@ def parts_db_query(
     Uses MDPartsManagement API for direct database access.
 
     Args:
-        filter_property: Property to filter on (e.g., "ProductSubGroup", "PartNr", "Manufacturer")
-        filter_value: Value to match
-        return_properties: List of properties to return (default: PartNr, Description1, Manufacturer)
+        filter_property: A member of MDPart to filter on - "PartNr",
+            "Variant", "ProductGroup", "ProductSubGroup". (The ARTICLE_*
+            fields live on the property list, not on MDPart, and cannot be
+            filtered on here.)
+        filter_value: Substring to match, case-sensitive
+        return_properties: Properties to return. Accepts raw parts-DB names
+            ("ARTICLE_DESCR1"), MDPart members ("PartNr"), or the friendly
+            aliases in _PARTS_PROP_ALIASES ("Description1", "Manufacturer").
+            Default: part number, description 1, manufacturer, product
+            group, product subgroup. Names are resolved before the query and
+            the RESOLVED name is the key in each returned part.
         limit: Maximum number of parts to return
 
     Returns:
-        dict with parts list and count
+        dict with parts list and count. Any requested property that exists on
+        neither the property list nor MDPart comes back as "" and is named in
+        "unknownProperties".
     """
     # limit is interpolated into the C# source outside any string literal, so
     # it must be a real integer - anything else would be code injection.
@@ -173,20 +319,22 @@ def parts_db_query(
     if return_properties is None:
         return_properties = [
             "PartNr",
-            "Description1",
-            "Manufacturer",
+            "ARTICLE_DESCR1",
+            "ARTICLE_MANUFACTURER",
             "ProductGroup",
             "ProductSubGroup",
         ]
 
-    props_array = ", ".join([f'"{cs_escape(p)}"' for p in return_properties])
+    props_array = ", ".join(
+        [f'"{cs_escape(_resolve_prop_name(p))}"' for p in return_properties]
+    )
 
     filter_code = ""
     if filter_property and filter_value:
         if not _CS_IDENTIFIER.match(filter_property):
             return _identifier_error(filter_property, "filter_property")
         filter_code = f'''
-            .Where(p => p.{filter_property}?.ToString()?.Contains("{cs_escape(filter_value)}") == true)'''
+                    .Where(p => Convert.ToString(p.{filter_property}).Contains("{cs_escape(filter_value)}"))'''
 
     script = f"""using System;
 using System.IO;
@@ -197,11 +345,13 @@ using Eplan.EplApi.Scripting;
 
 public class PartsQuery_{uuid.uuid4().hex[:6]}
 {{
+{_PARTS_PROP_HELPERS_CS}
     [Start]
     public void Run()
     {{
         var results = new Dictionary<string, object>();
         var partsList = new List<Dictionary<string, object>>();
+        var unknownProps = new List<string>();
 
         try
         {{
@@ -219,16 +369,19 @@ public class PartsQuery_{uuid.uuid4().hex[:6]}
                     var partDict = new Dictionary<string, object>();
                     foreach (var propName in propsToGet)
                     {{
-                        try
+                        // MDPart's own members (PartNr, ProductGroup...) are
+                        // not on the property list, so try both places.
+                        string val;
+                        if (ReadProp(part.Properties, propName, out val)
+                            || ReadProp(part, propName, out val))
                         {{
-                            var prop = part.Properties.GetType().GetProperty(propName);
-                            if (prop != null)
-                            {{
-                                var val = prop.GetValue(part.Properties);
-                                partDict[propName] = val?.ToString() ?? "";
-                            }}
+                            partDict[propName] = val;
                         }}
-                        catch {{ partDict[propName] = ""; }}
+                        else
+                        {{
+                            partDict[propName] = "";
+                            if (!unknownProps.Contains(propName)) unknownProps.Add(propName);
+                        }}
                     }}
                     partsList.Add(partDict);
                 }}
@@ -236,6 +389,7 @@ public class PartsQuery_{uuid.uuid4().hex[:6]}
                 results["success"] = true;
                 results["count"] = partsList.Count;
                 results["parts"] = partsList;
+                if (unknownProps.Count > 0) results["unknownProperties"] = unknownProps;
             }}
         }}
         catch (Exception ex)
@@ -257,8 +411,10 @@ def parts_db_count(filter_property: str = None, filter_value: str = None) -> dic
     Count parts in the EPLAN parts database.
 
     Args:
-        filter_property: Property to filter on
-        filter_value: Value to match
+        filter_property: A member of MDPart to filter on - "PartNr",
+            "Variant", "ProductGroup", "ProductSubGroup" (see
+            parts_db_query; ARTICLE_* fields cannot be filtered on here)
+        filter_value: Substring to match, case-sensitive
 
     Returns:
         dict with count
@@ -267,7 +423,9 @@ def parts_db_count(filter_property: str = None, filter_value: str = None) -> dic
     if filter_property and filter_value:
         if not _CS_IDENTIFIER.match(filter_property):
             return _identifier_error(filter_property, "filter_property")
-        filter_code = f'.Where(p => p.{filter_property}?.ToString()?.Contains("{cs_escape(filter_value)}") == true)'
+        # Convert.ToString() rather than a null-conditional chain: it yields
+        # "" for null, and works for the value-type members too.
+        filter_code = f'.Where(p => Convert.ToString(p.{filter_property}).Contains("{cs_escape(filter_value)}"))'
 
     script = f"""using System;
 using System.IO;
@@ -341,20 +499,21 @@ public class PartsGet_{uuid.uuid4().hex[:6]}
 
                 if (part != null)
                 {{
+                    // Plain assignment, not a dictionary index initializer:
+                    // that syntax is C# 6 and does not compile in EPLAN's
+                    // script engine.
                     var props = part.Properties;
-                    var partDict = new Dictionary<string, object>
-                    {{
-                        ["PartNr"] = props.ARTICLE_PARTNR ?? "",
-                        ["Description1"] = props.ARTICLE_DESCR1 ?? "",
-                        ["Description2"] = props.ARTICLE_DESCR2 ?? "",
-                        ["Description3"] = props.ARTICLE_DESCR3 ?? "",
-                        ["Manufacturer"] = props.ARTICLE_MANUFACTURER ?? "",
-                        ["Supplier"] = props.ARTICLE_SUPPLIER ?? "",
-                        ["OrderNr"] = props.ARTICLE_ORDERNR ?? "",
-                        ["ProductGroup"] = part.ProductGroup.ToString(),
-                        ["ProductSubGroup"] = part.ProductSubGroup.ToString(),
-                        ["ProductTopGroup"] = part.ProductTopGroup.ToString()
-                    }};
+                    var partDict = new Dictionary<string, object>();
+                    partDict["PartNr"] = props.ARTICLE_PARTNR.ToString();
+                    partDict["Description1"] = props.ARTICLE_DESCR1.ToString();
+                    partDict["Description2"] = props.ARTICLE_DESCR2.ToString();
+                    partDict["Description3"] = props.ARTICLE_DESCR3.ToString();
+                    partDict["Manufacturer"] = props.ARTICLE_MANUFACTURER.ToString();
+                    partDict["Supplier"] = props.ARTICLE_SUPPLIER.ToString();
+                    partDict["OrderNr"] = props.ARTICLE_ORDERNR.ToString();
+                    partDict["ProductGroup"] = part.ProductGroup.ToString();
+                    partDict["ProductSubGroup"] = part.ProductSubGroup.ToString();
+                    partDict["ProductTopGroup"] = part.ProductTopGroup.ToString();
 
                     results["success"] = true;
                     results["found"] = true;
@@ -391,19 +550,21 @@ def parts_db_create(part_number: str, properties: dict = None) -> dict:
 
     Args:
         part_number: Part number of the new part (must not exist yet)
-        properties: Optional dict of raw parts-DB property names to string
+        properties: Optional dict of parts-DB property names to string
             values, e.g. {"ARTICLE_MANUFACTURER": "Siemens",
-            "ARTICLE_DESCR1": "Circuit breaker"}
+            "ARTICLE_DESCR1": "Circuit breaker"}. The _PARTS_PROP_ALIASES
+            friendly names ("Manufacturer", "Description1") work too.
 
     Returns:
-        dict with success status and the properties that were set
+        dict with success status, "propertiesSet", and "propertiesFailed" -
+        the latter naming each property that could not be written and why.
     """
     part_number_cs = cs_escape(part_number)
     # Property names/values go into parallel C# string arrays (each element
     # cs_escape'd) and are applied at runtime via reflection with a single
     # loop variable - never minted into C# identifiers, so an arbitrary
     # property name cannot break or inject into the script.
-    items = list((properties or {}).items())
+    items = [(_resolve_prop_name(n), v) for n, v in (properties or {}).items()]
     names_array = ", ".join(f'"{cs_escape(name)}"' for name, _ in items)
     values_array = ", ".join(f'"{cs_escape(value)}"' for _, value in items)
 
@@ -416,6 +577,7 @@ using Eplan.EplApi.Scripting;
 
 public class PartsCreate_{uuid.uuid4().hex[:6]}
 {{
+{_PARTS_PROP_HELPERS_CS}
     [Start]
     public void Run()
     {{
@@ -443,18 +605,20 @@ public class PartsCreate_{uuid.uuid4().hex[:6]}
                     {{
                         try
                         {{
-                            var prop = part.Properties.GetType().GetProperty(propNames[i]);
-                            if (prop != null)
+                            string why = WriteProp(part.Properties, propNames[i], propValues[i]);
+                            if (why == null)
                             {{
-                                prop.SetValue(part.Properties, propValues[i]);
                                 setProps.Add(propNames[i]);
                             }}
                             else
                             {{
-                                failedProps.Add(propNames[i]);
+                                failedProps.Add(propNames[i] + ": " + why);
                             }}
                         }}
-                        catch {{ failedProps.Add(propNames[i]); }}
+                        catch (Exception ep)
+                        {{
+                            failedProps.Add(propNames[i] + ": " + ep.Message);
+                        }}
                     }}
                     results["success"] = true;
                     results["created"] = "{part_number_cs}";
@@ -483,14 +647,18 @@ def parts_db_update(part_number: str, property_name: str, property_value: str) -
 
     Args:
         part_number: The part number to update
-        property_name: Property to update (e.g., "ARTICLE_DESCR1")
+        property_name: Property to update - a raw parts-DB name
+            ("ARTICLE_DESCR1") or one of the _PARTS_PROP_ALIASES
+            ("Description1", "Manufacturer")
         property_value: New value
 
     Returns:
-        dict with success status
+        dict with success status and, on success, "value": the property read
+        straight back out of the database. Writes take effect immediately -
+        there is no separate save/commit step.
     """
     part_number_cs = cs_escape(part_number)
-    property_name_cs = cs_escape(property_name)
+    property_name_cs = cs_escape(_resolve_prop_name(property_name))
     property_value_cs = cs_escape(property_value)
     script = f'''using System;
 using System.IO;
@@ -501,6 +669,7 @@ using Eplan.EplApi.Scripting;
 
 public class PartsUpdate_{uuid.uuid4().hex[:6]}
 {{
+{_PARTS_PROP_HELPERS_CS}
     [Start]
     public void Run()
     {{
@@ -515,17 +684,19 @@ public class PartsUpdate_{uuid.uuid4().hex[:6]}
 
                 if (part != null)
                 {{
-                    var prop = part.Properties.GetType().GetProperty("{property_name_cs}");
-                    if (prop != null)
+                    string why = WriteProp(part.Properties, "{property_name_cs}", "{property_value_cs}");
+                    if (why == null)
                     {{
-                        prop.SetValue(part.Properties, "{property_value_cs}");
+                        string readBack;
+                        ReadProp(part.Properties, "{property_name_cs}", out readBack);
                         results["success"] = true;
                         results["updated"] = true;
+                        results["value"] = readBack;
                     }}
                     else
                     {{
                         results["success"] = false;
-                        results["error"] = "Property not found: {property_name_cs}";
+                        results["error"] = "{property_name_cs}: " + why;
                     }}
                 }}
                 else

@@ -133,3 +133,57 @@ and two extra remote-API round-trips (register + unregister) per call —
 measured at roughly 44% of total run time for a small script. Call
 `ExecuteScript` alone for one-shot scripts; reserve `RegisterScript`/
 `UnregisterScript` for scripts you're actually loading persistently.
+
+## 10. Scripts compile as C# 5 — and a compile error looks exactly like a hang
+
+EPLAN's script engine compiles with a **pre-C# 6** compiler. These are all
+syntax errors in a script, however normal they look:
+
+| Feature | C# | Symptom | Write instead |
+|---|---|---|---|
+| `?.` `?[]` null-conditional | 6 | `CS1525: Invalid expression term '.'` + `CS1003: Syntax error, ':' expected` | explicit null check, or `Convert.ToString(x)` (yields `""` for null) |
+| `$"text {x}"` interpolation | 6 | `CS1056` / parse errors | `string.Format(...)` or `+` |
+| `new Dictionary<..> { ["k"] = v }` index initializer | 6 | parse errors at the `[` | construct, then `d["k"] = v;` |
+| `nameof(x)` | 6 | `CS0103` | the literal string |
+| expression-bodied members, auto-property initializers, `??=` | 6+ | parse errors | classic bodies |
+
+**Why this is worse than a normal compile error:** the failure is invisible
+to the caller. `ExecuteScript` still returns **success** in ~0.4 s, the
+script never runs, and if your script's contract is "write a result file",
+the only symptom is that the file never appears. Drive a script from an
+external process with a wait-for-result loop and you get a *timeout* — so
+you go debugging the connection, a modal dialog, or a "blocked" EPLAN,
+while the actual `CS####` message sits in EPLAN's system-message tree.
+Field-confirmed on EPLAN 2026: four separate parts-database functions were
+written off as "EPLAN hangs on parts queries" for months; all four were
+`?.` and one dictionary index initializer.
+
+**So: on any script timeout, read the message tree first.**
+
+```csharp
+var col = new SysMessagesCollection(0, MessageLevel.Error);
+var it = col.GetSysMsgEnumerator();
+while (it.MoveNext())
+{
+    var m = it.Current as BaseException;   // .MessageLevel, not .Level (CS1061)
+    if (m != null) Console.WriteLine(m.Message);
+}
+```
+
+EPLAN brackets each failed compile with a `Compile errors ... in the script
+<path>:` header and a `<path> cannot be compiled` footer, with the `CS####`
+lines between them — and the generated file name is in both, so you can pick
+out the messages belonging to one script. In this repo,
+`_execute_script` in `scripted.py` does exactly that and reports
+`compile_errors` instead of a bare timeout.
+
+Two related notes:
+
+- EPLAN pre-imports `System`, `System.Linq`, `Eplan.EplApi.Base`,
+  `Eplan.EplApi.MasterData` and `Eplan.EplApi.Scripting`, so repeating those
+  `using` directives logs `CS0105 (…appeared previously in this namespace)`.
+  Harmless — the script still compiles — but it is noise in the tree, and it
+  can distract from the one line that actually matters.
+- A *runtime* exception inside `[Start]` is a different failure with the same
+  outward symptom (no result file). Wrap the body in try/catch and write the
+  exception into the result file, so the two cases stay distinguishable.
