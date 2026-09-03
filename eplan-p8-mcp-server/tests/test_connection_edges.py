@@ -165,15 +165,35 @@ def test_quiet_mode_parses_quoted_empty_and_plain_params():
 
 
 def test_quiet_mode_generated_script_cleaned_up():
+    """
+    The wrapper must delete the script and result file IT created.
+
+    Asserts on the delta, not on the directory being empty. Those directories
+    are real and shared: another test in the same session, an interrupted run,
+    or a live EPLAN call from the developer's own session can leave a file
+    there, and this test then failed while reporting nothing about the code it
+    is supposed to be checking. Reproduced deterministically by touching
+    `scripts/generated/exec_action_deadbeef.cs` before running it.
+    """
+    base = os.path.dirname(os.path.abspath(eplan_connection.__file__))
+    gen_dir = os.path.join(base, "scripts", "generated")
+    res_dir = os.path.join(base, "scripts", "results")
+
+    def snapshot(directory, prefix):
+        if not os.path.isdir(directory):
+            return set()
+        return {f for f in os.listdir(directory) if f.startswith(prefix)}
+
+    before_gen = snapshot(gen_dir, "exec_action_")
+    before_res = snapshot(res_dir, "exec_result_")
+
     mgr, fake = _manager_with_fake()
     mgr.execute_action('someAction /A:"x"', quiet_mode=True)
-    base = os.path.dirname(os.path.abspath(eplan_connection.__file__))
-    leftovers = [f for f in os.listdir(os.path.join(base, "scripts", "generated"))
-                 if f.startswith("exec_action_")]
-    results = [f for f in os.listdir(os.path.join(base, "scripts", "results"))
-               if f.startswith("exec_result_")]
-    assert leftovers == []
-    assert results == []
+
+    new_gen = snapshot(gen_dir, "exec_action_") - before_gen
+    new_res = snapshot(res_dir, "exec_result_") - before_res
+    assert new_gen == set(), f"wrapper left its generated script behind: {new_gen}"
+    assert new_res == set(), f"wrapper left its result file behind: {new_res}"
 
 
 def test_quiet_mode_never_registers_oneshot_script():

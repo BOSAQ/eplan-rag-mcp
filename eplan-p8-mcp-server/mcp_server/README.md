@@ -37,7 +37,13 @@ How execution works internally (`eplan_connection.py::execute_action(action, qui
 1. Parse the action name and parameters.
 2. Generate a `.cs` script that runs the action inside
    `using (var qm = new QuietModeStep(QuietModes.ShowNoDialogs)) { ... }`.
-3. `RegisterScript` → `ExecuteScript` → read a JSON result file → `UnregisterScript`.
+3. `ExecuteScript` → read a JSON result file. Deliberately NOT `RegisterScript`
+   first: registration installs a script's *persistent* hooks
+   (`[DeclareAction]` / `[DeclareEventHandler]` / `[DeclareMenu]`), and a
+   generated wrapper has only a `[Start]` method, which `ExecuteScript` compiles
+   and runs by itself. Registering one achieved nothing, made EPLAN log "The
+   script does not contain attributes for loading." once per call, and cost two
+   extra remote round-trips (median 0.39s → 0.22s without it).
 4. Return `{"success": bool, "parameters": {...}}`, where `parameters` are the
    values EPLAN wrote back into the `ActionCallingContext` (e.g. `PROJECT`, `PAGES`).
 
@@ -276,7 +282,7 @@ EPLAN nor pythonnet: `eplan_tools_search` works with EPLAN closed.
 | `eplan_test` | Show a MessageBox inside EPLAN to verify end-to-end communication. |
 | `eplan_disconnect` | Close the active connection. |
 
-### 2. Action tools (155)
+### 2. Action tools
 
 Every EPLAN action is exposed as `eplan_<action>`. Each tool's description and
 input schema are generated from the underlying Python function's docstring and
