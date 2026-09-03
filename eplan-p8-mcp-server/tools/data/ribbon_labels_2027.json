@@ -1,0 +1,1592 @@
+{
+ "_meta": {
+  "commands": 316,
+  "custom_skipped": 4,
+  "eplan_version": "2027",
+  "note": "Stock EPLAN buttons only - tabs and commands flagged IsCustom are skipped so locally installed add-in labels never land in this file. Keyed by ribbon command id, the same id MFTools.xml/UsedActions uses, so build_action_registry.py can join labels onto actions. Regenerate with tools/capture_ribbon_labels.py.",
+  "source": "Eplan.EplApi.Gui.RibbonBar walk of a running installation",
+  "tabs": 16
+ },
+ "commands": {
+  "35014": {
+   "group": "Page",
+   "tab": "Home",
+   "text": "New"
+  },
+  "35021": {
+   "group": "2D panel layout",
+   "tab": "Devices",
+   "text": "Navigator"
+  },
+  "35036": {
+   "group": "Edit",
+   "tab": "Home",
+   "text": "Properties"
+  },
+  "35037": {
+   "group": "Clipboard",
+   "tab": "Home",
+   "text": "Paste"
+  },
+  "35038": {
+   "group": "Clipboard",
+   "tab": "Home",
+   "text": "Delete"
+  },
+  "35039": {
+   "group": "Clipboard",
+   "tab": "Home",
+   "text": "Cut"
+  },
+  "35040": {
+   "group": "Clipboard",
+   "tab": "Home",
+   "text": "Copy"
+  },
+  "35042": {
+   "group": "Find",
+   "tab": "Home",
+   "text": "Find"
+  },
+  "35044": {
+   "group": "Find",
+   "tab": "Home",
+   "text": "Show results"
+  },
+  "35049": {
+   "group": "Synchronization",
+   "tab": "Master data",
+   "text": "Synchronize system master data"
+  },
+  "35056": {
+   "group": "Parts",
+   "tab": "Master data",
+   "text": "Management"
+  },
+  "35070": {
+   "group": "Translation",
+   "tab": "Tools",
+   "text": "Translate"
+  },
+  "35071": {
+   "group": "Translation",
+   "tab": "Tools",
+   "text": "Test input"
+  },
+  "35072": {
+   "group": "Translation",
+   "tab": "Tools",
+   "text": "Export missing-word list"
+  },
+  "35073": {
+   "group": "Translation",
+   "tab": "Tools",
+   "text": "Dictionary"
+  },
+  "35075": {
+   "group": "Translation",
+   "tab": "Tools",
+   "text": "Remove translation"
+  },
+  "35084": {
+   "group": "PLC",
+   "tab": "Devices",
+   "text": "Navigator"
+  },
+  "35085": {
+   "group": "PLC",
+   "tab": "Devices",
+   "text": "Assignment list"
+  },
+  "35089": {
+   "group": "Management",
+   "tab": "Tools",
+   "text": "Structure identifiers"
+  },
+  "35090": {
+   "group": "Synchronization",
+   "tab": "Master data",
+   "text": "Generate preview images"
+  },
+  "35092": {
+   "group": "Cables",
+   "tab": "Connections",
+   "text": "Navigator"
+  },
+  "35093": {
+   "group": "Plugs",
+   "tab": "Devices",
+   "text": "Navigator"
+  },
+  "35094": {
+   "group": "Terminals",
+   "tab": "Devices",
+   "text": "Navigator"
+  },
+  "35096": {
+   "group": "Interruption points",
+   "tab": "Connections",
+   "text": "Navigator"
+  },
+  "35097": {
+   "group": "Connections",
+   "tab": "Connections",
+   "text": "Potentials"
+  },
+  "35101": {
+   "group": "Review",
+   "tab": "Tools",
+   "text": "Messages"
+  },
+  "35102": {
+   "group": "Translation",
+   "tab": "Tools",
+   "text": "Import project texts"
+  },
+  "35116": {
+   "group": "Devices",
+   "tab": "Devices",
+   "text": "Navigator"
+  },
+  "35136": {
+   "group": "Connections",
+   "tab": "Connections",
+   "text": "Navigator"
+  },
+  "35139": {
+   "group": "Connections",
+   "tab": "Connections",
+   "text": "Place definition points"
+  },
+  "35140": {
+   "group": "Connections",
+   "tab": "Connections",
+   "text": "Enter designation"
+  },
+  "35141": {
+   "group": "Connections",
+   "tab": "Connections",
+   "text": "Align and format"
+  },
+  "35144": {
+   "group": "Page",
+   "tab": "Home",
+   "text": "Navigator"
+  },
+  "35145": {
+   "group": "Graphical preview",
+   "tab": "Home",
+   "text": "Open"
+  },
+  "35148": {
+   "group": "PLC",
+   "tab": "Devices",
+   "text": "Address"
+  },
+  "35161": {
+   "group": "Symbol",
+   "tab": "Edit",
+   "text": "New variant"
+  },
+  "35167": {
+   "group": "Synchronization",
+   "tab": "Master data",
+   "text": "Synchronize project"
+  },
+  "35173": {
+   "group": "Macros",
+   "tab": "Master data",
+   "text": "Generate automatically"
+  },
+  "35174": {
+   "group": "Reports",
+   "tab": "Tools",
+   "text": "Generate"
+  },
+  "35175": {
+   "group": "Reports",
+   "tab": "Tools",
+   "text": "Update"
+  },
+  "35183": {
+   "group": "Connections",
+   "tab": "Connections",
+   "text": "Update"
+  },
+  "35184": {
+   "group": "Devices",
+   "tab": "Devices",
+   "text": "Number"
+  },
+  "35190": {
+   "group": "Devices",
+   "tab": "Devices",
+   "text": "Bill of materials"
+  },
+  "35192": {
+   "group": "Synchronization",
+   "tab": "Master data",
+   "text": "Complete project"
+  },
+  "35196": {
+   "group": "Find",
+   "tab": "Home",
+   "text": "Synchronize selection"
+  },
+  "35201": {
+   "group": "Terminals",
+   "tab": "Devices",
+   "text": "Terminal strip"
+  },
+  "35202": {
+   "group": "Cables",
+   "tab": "Connections",
+   "text": "Number"
+  },
+  "35209": {
+   "group": "PLC",
+   "tab": "Devices",
+   "text": "Connection points"
+  },
+  "35210": {
+   "group": "PLC",
+   "tab": "Devices",
+   "text": "Addresses"
+  },
+  "35214": {
+   "group": "Review",
+   "tab": "Tools",
+   "text": "Check"
+  },
+  "35215": {
+   "group": "Management",
+   "tab": "Tools",
+   "text": "Layers"
+  },
+  "35229": {
+   "group": "Page",
+   "tab": "Home",
+   "text": "Number"
+  },
+  "35233": {
+   "group": "Terminals",
+   "tab": "Devices",
+   "text": "Number"
+  },
+  "35234": {
+   "group": "Plugs",
+   "tab": "Devices",
+   "text": "Number"
+  },
+  "35267": {
+   "group": "Standards",
+   "tab": "Tools",
+   "text": "Exchange"
+  },
+  "35268": {
+   "group": "Synchronization",
+   "tab": "Master data",
+   "text": "Update project"
+  },
+  "35295": {
+   "group": "Edit",
+   "tab": "Home",
+   "text": "In table"
+  },
+  "35299": {
+   "group": "Reports",
+   "tab": "Tools",
+   "text": "Automated processing"
+  },
+  "35308": {
+   "group": "Options",
+   "tab": "Edit",
+   "text": "Global"
+  },
+  "35309": {
+   "group": "Synchronization",
+   "tab": "Master data",
+   "text": "Store documents"
+  },
+  "35323": {
+   "group": "Reports",
+   "tab": "Tools",
+   "text": "Generate project reports"
+  },
+  "35353": {
+   "group": "Plugs",
+   "tab": "Devices",
+   "text": "Plugs"
+  },
+  "35354": {
+   "group": "Cables",
+   "tab": "Connections",
+   "text": "Edit"
+  },
+  "35357": {
+   "group": "Parts",
+   "tab": "Master data",
+   "text": "Navigator"
+  },
+  "35358": {
+   "group": "Project options",
+   "tab": "Devices",
+   "text": "Navigator"
+  },
+  "35359": {
+   "group": "Project options",
+   "tab": "Devices",
+   "text": "Create section"
+  },
+  "35360": {
+   "group": "Project options",
+   "tab": "Devices",
+   "text": "Placeholder objects"
+  },
+  "35365": {
+   "group": "Clipboard",
+   "tab": "Home",
+   "text": "Assign format"
+  },
+  "35366": {
+   "group": "Clipboard",
+   "tab": "Home",
+   "text": "Copy format"
+  },
+  "35376": {
+   "group": "Comments",
+   "tab": "Tools",
+   "text": "Import"
+  },
+  "35380": {
+   "group": "Cables",
+   "tab": "Connections",
+   "text": "Reassign all"
+  },
+  "35381": {
+   "group": "Comments",
+   "tab": "Tools",
+   "text": "Navigator"
+  },
+  "35399": {
+   "group": "3D mounting layout",
+   "tab": "Insert",
+   "text": "Navigator"
+  },
+  "35400": {
+   "group": "Parts",
+   "tab": "Master data",
+   "text": "Update"
+  },
+  "35401": {
+   "group": "Parts",
+   "tab": "Master data",
+   "text": "Complete"
+  },
+  "35402": {
+   "group": "Parts",
+   "tab": "Master data",
+   "text": "Synchronize"
+  },
+  "35506": {
+   "group": "3D layout space",
+   "tab": "Home",
+   "text": "Navigator"
+  },
+  "35507": {
+   "group": "3D layout space",
+   "tab": "Home",
+   "text": "New"
+  },
+  "35521": {
+   "group": "Reports",
+   "tab": "Tools",
+   "text": "Model views"
+  },
+  "35548": {
+   "group": "Routing connections",
+   "tab": "Edit",
+   "text": "Bundle"
+  },
+  "35550": {
+   "group": "Optimize nets",
+   "tab": "Edit",
+   "text": "Automatic"
+  },
+  "35556": {
+   "group": "Routing connections",
+   "tab": "Edit",
+   "text": "Route"
+  },
+  "35561": {
+   "group": "Topology",
+   "tab": "Connections",
+   "text": "Navigator"
+  },
+  "35562": {
+   "group": "Topology",
+   "tab": "Connections",
+   "text": "Route"
+  },
+  "35568": {
+   "group": "Piping",
+   "tab": "Pre-planning",
+   "text": "Navigator"
+  },
+  "35572": {
+   "group": "General",
+   "tab": "Pre-planning",
+   "text": "Navigator"
+  },
+  "35573": {
+   "group": "Pre-planning macro",
+   "tab": "Pre-planning",
+   "text": "Create"
+  },
+  "35574": {
+   "group": "Pre-planning macro",
+   "tab": "Pre-planning",
+   "text": "Insert"
+  },
+  "35575": {
+   "group": "General",
+   "tab": "Pre-planning",
+   "text": "Import"
+  },
+  "35577": {
+   "group": "Management",
+   "tab": "Tools",
+   "text": "Properties"
+  },
+  "35579": {
+   "group": "Edit",
+   "tab": "Pre-planning",
+   "text": "Configure segment definitions"
+  },
+  "35587": {
+   "group": "General",
+   "tab": "Pre-planning",
+   "text": "Segment templates"
+  },
+  "35589": {
+   "group": "Topology",
+   "tab": "Connections",
+   "text": "Fill capacity"
+  },
+  "35593": {
+   "group": "Protection",
+   "tab": "Edit",
+   "text": "Configure"
+  },
+  "35599": {
+   "group": "Edit",
+   "tab": "Home",
+   "text": "Property overview"
+  },
+  "35608": {
+   "group": "Macros",
+   "tab": "Insert",
+   "text": "Navigator"
+  },
+  "35611": {
+   "group": "Wire harness",
+   "tab": "Connections",
+   "text": "Navigator"
+  },
+  "35612": {
+   "group": "Edit",
+   "tab": "Pre-planning",
+   "text": "Number PCT loops"
+  },
+  "35626": {
+   "group": "Piping",
+   "tab": "Pre-planning",
+   "text": "Edit piping route"
+  },
+  "35650": {
+   "group": "Management",
+   "tab": "Tools",
+   "text": "Property arrangements"
+  },
+  "35651": {
+   "group": "Connections",
+   "tab": "Connections",
+   "text": "Source and target"
+  },
+  "35672": {
+   "group": "Macros",
+   "tab": "Master data",
+   "text": "Macro collection"
+  },
+  "35678": {
+   "group": "PLC",
+   "tab": "Devices",
+   "text": "Move"
+  },
+  "35679": {
+   "group": "PLC",
+   "tab": "Devices",
+   "text": "Start addresses"
+  },
+  "35700": {
+   "group": "Cogineer",
+   "tab": "Tools",
+   "text": "Designer"
+  },
+  "35701": {
+   "group": "Cogineer",
+   "tab": "Tools",
+   "text": "Builder"
+  },
+  "35703": {
+   "group": "Outline / form",
+   "tab": "Master data",
+   "text": "Outline (extrusion)"
+  },
+  "35705": {
+   "group": "Outline / form",
+   "tab": "Master data",
+   "text": "Outline (NC data)"
+  },
+  "35706": {
+   "group": "Drilling pattern / outline",
+   "tab": "Master data",
+   "text": "Generate"
+  },
+  "35707": {
+   "group": "Symbols",
+   "tab": "Master data",
+   "text": "Connecting points"
+  },
+  "35708": {
+   "group": "Symbols",
+   "tab": "Master data",
+   "text": "Symbol"
+  },
+  "35709": {
+   "group": "Symbols",
+   "tab": "Master data",
+   "text": "Symbol library"
+  },
+  "35710": {
+   "group": "Plot frames / forms",
+   "tab": "Master data",
+   "text": "Plot frame"
+  },
+  "35711": {
+   "group": "Synchronization",
+   "tab": "Tools",
+   "text": "Functions"
+  },
+  "35712": {
+   "group": "Synchronization",
+   "tab": "Tools",
+   "text": "Connections"
+  },
+  "35713": {
+   "group": "Topology",
+   "tab": "Connections",
+   "text": "Generate"
+  },
+  "35715": {
+   "group": "Devices",
+   "tab": "Devices",
+   "text": "Extras"
+  },
+  "35718": {
+   "group": "General",
+   "tab": "View",
+   "text": "Connection point designations"
+  },
+  "35719": {
+   "group": "Form",
+   "tab": "Edit",
+   "text": "More"
+  },
+  "35720": {
+   "group": "Form",
+   "tab": "Edit",
+   "text": "Select"
+  },
+  "35721": {
+   "group": "Plot frame",
+   "tab": "Edit",
+   "text": "More"
+  },
+  "35722": {
+   "group": "Symbol",
+   "tab": "Edit",
+   "text": "More"
+  },
+  "35723": {
+   "group": "NC record",
+   "tab": "Edit",
+   "text": "Work"
+  },
+  "35724": {
+   "group": "NC record",
+   "tab": "Edit",
+   "text": "Generate"
+  },
+  "35725": {
+   "group": "Logic",
+   "tab": "Insert",
+   "text": "Symbol connection points"
+  },
+  "35726": {
+   "group": "Text",
+   "tab": "Insert",
+   "text": "Forms"
+  },
+  "35729": {
+   "group": "Devices",
+   "tab": "Insert",
+   "text": "PLC connection points"
+  },
+  "35732": {
+   "group": "Page",
+   "tab": "Home",
+   "text": "Page macro"
+  },
+  "35734": {
+   "group": "Plot frames / forms",
+   "tab": "Master data",
+   "text": "Form"
+  },
+  "35735": {
+   "group": "Outline / form",
+   "tab": "Master data",
+   "text": "Form (copper)"
+  },
+  "35736": {
+   "group": "Routing connections",
+   "tab": "Edit",
+   "text": "Manager"
+  },
+  "35748": {
+   "group": "Macros",
+   "tab": "Master data",
+   "text": "Create assembly"
+  },
+  "35753": {
+   "group": "Synchronization",
+   "tab": "Master data",
+   "text": "Eplan Cloud master data"
+  },
+  "36002": {
+   "group": "Symbol",
+   "tab": "Edit",
+   "text": "Properties as numbers"
+  },
+  "36003": {
+   "group": "View",
+   "tab": "Edit",
+   "text": "Variant A"
+  },
+  "36004": {
+   "group": "View",
+   "tab": "Edit",
+   "text": "Variant B"
+  },
+  "36005": {
+   "group": "View",
+   "tab": "Edit",
+   "text": "Variant C"
+  },
+  "36006": {
+   "group": "View",
+   "tab": "Edit",
+   "text": "Variant D"
+  },
+  "36007": {
+   "group": "View",
+   "tab": "Edit",
+   "text": "Symbol variant Contactor contact image"
+  },
+  "36019": {
+   "group": "View",
+   "tab": "Edit",
+   "text": "Variant E"
+  },
+  "36020": {
+   "group": "View",
+   "tab": "Edit",
+   "text": "Variant F"
+  },
+  "36021": {
+   "group": "View",
+   "tab": "Edit",
+   "text": "Variant G"
+  },
+  "36022": {
+   "group": "View",
+   "tab": "Edit",
+   "text": "Variant H"
+  },
+  "36024": {
+   "group": "View",
+   "tab": "Edit",
+   "text": "Symbol variant Point wiring"
+  },
+  "36025": {
+   "group": "Tags",
+   "tab": "Master data",
+   "text": "Management"
+  },
+  "36027": {
+   "group": "View",
+   "tab": "Edit",
+   "text": "Edit property arrangements"
+  },
+  "36028": {
+   "group": "General",
+   "tab": "View",
+   "text": "Property arrangement"
+  },
+  "36203": {
+   "group": "General",
+   "tab": "View",
+   "text": "Placeholders"
+  },
+  "36215": {
+   "group": "Form",
+   "tab": "Edit",
+   "text": "Special text"
+  },
+  "36302": {
+   "group": "NC record",
+   "tab": "Edit",
+   "text": "Delete"
+  },
+  "36307": {
+   "group": "Outline",
+   "tab": "Edit",
+   "text": "Check"
+  },
+  "36308": {
+   "group": "Outline",
+   "tab": "Edit",
+   "text": "Clean up"
+  },
+  "36309": {
+   "group": "NC record",
+   "tab": "View",
+   "text": "Next"
+  },
+  "36310": {
+   "group": "NC record",
+   "tab": "View",
+   "text": "Previous"
+  },
+  "36405": {
+   "group": "Plot frame",
+   "tab": "Edit",
+   "text": "Special text"
+  },
+  "36811": {
+   "group": "Viewing angle",
+   "tab": "View",
+   "text": "Rotate"
+  },
+  "36824": {
+   "group": "Locked areas",
+   "tab": "Insert",
+   "text": "Placement"
+  },
+  "36825": {
+   "group": "Locked areas",
+   "tab": "Insert",
+   "text": "Cut-out"
+  },
+  "36826": {
+   "group": "Layout space",
+   "tab": "View",
+   "text": "Mounting clearances"
+  },
+  "36829": {
+   "group": "Options",
+   "tab": "Insert",
+   "text": "Collision check"
+  },
+  "36830": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Rotate around axis"
+  },
+  "36833": {
+   "group": "3D layout space",
+   "tab": "Home",
+   "text": "Measuring"
+  },
+  "36834": {
+   "group": "Layout space",
+   "tab": "View",
+   "text": "Simplified representation"
+  },
+  "36835": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Unite"
+  },
+  "36836": {
+   "group": "Mounting aids",
+   "tab": "Insert",
+   "text": "Mounting surface"
+  },
+  "36837": {
+   "group": "Mounting aids",
+   "tab": "Insert",
+   "text": "Handle"
+  },
+  "36838": {
+   "group": "Mounting aids",
+   "tab": "Insert",
+   "text": "Mounting point"
+  },
+  "36839": {
+   "group": "Options",
+   "tab": "Insert",
+   "text": "Placement options"
+  },
+  "36840": {
+   "group": "Options",
+   "tab": "Insert",
+   "text": "Change rotation angle"
+  },
+  "36843": {
+   "group": "Options",
+   "tab": "Insert",
+   "text": "Change handle"
+  },
+  "36844": {
+   "group": "Routing connections",
+   "tab": "View",
+   "text": "Connection preview"
+  },
+  "36845": {
+   "group": "Placement area",
+   "tab": "Insert",
+   "text": "Define"
+  },
+  "36846": {
+   "group": "Placement area",
+   "tab": "Insert",
+   "text": "Turn around"
+  },
+  "36847": {
+   "group": "Placement area",
+   "tab": "Insert",
+   "text": "Move"
+  },
+  "36848": {
+   "group": "Placement area",
+   "tab": "Insert",
+   "text": "Rotate"
+  },
+  "36853": {
+   "group": "Layout space",
+   "tab": "View",
+   "text": "Drilling view"
+  },
+  "36858": {
+   "group": "Layout space",
+   "tab": "View",
+   "text": "Connection point designations"
+  },
+  "36867": {
+   "group": "Routing aids",
+   "tab": "Insert",
+   "text": "Routing path"
+  },
+  "36868": {
+   "group": "Routing aids",
+   "tab": "Insert",
+   "text": "Routing range"
+  },
+  "36869": {
+   "group": "Routing aids",
+   "tab": "Insert",
+   "text": "Wiring cut-out"
+  },
+  "36870": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Fit"
+  },
+  "36871": {
+   "group": "Routing connections",
+   "tab": "Edit",
+   "text": "Generate routing path network"
+  },
+  "36872": {
+   "group": "Routing connections",
+   "tab": "View",
+   "text": "Fill capacity"
+  },
+  "36873": {
+   "group": "Routing connections",
+   "tab": "View",
+   "text": "Routing path view"
+  },
+  "36874": {
+   "group": "Routing connections",
+   "tab": "View",
+   "text": "Connection filter"
+  },
+  "36876": {
+   "group": "Mounting aids",
+   "tab": "Insert",
+   "text": "Base point"
+  },
+  "36884": {
+   "group": "Routing connections",
+   "tab": "Edit",
+   "text": "Change route"
+  },
+  "36885": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Change length"
+  },
+  "36886": {
+   "group": "Layout space",
+   "tab": "View",
+   "text": "Mounting aid"
+  },
+  "36887": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Automatic interpretation"
+  },
+  "36888": {
+   "group": "Mounting aids",
+   "tab": "Insert",
+   "text": "Mounting grid"
+  },
+  "36891": {
+   "group": "Connection point",
+   "tab": "Insert",
+   "text": "Define"
+  },
+  "36892": {
+   "group": "Routing connections",
+   "tab": "Edit",
+   "text": "Entry point into routing path network"
+  },
+  "36894": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Change angle"
+  },
+  "36896": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Change bending position"
+  },
+  "36897": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Inherit drilling pattern"
+  },
+  "36898": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "New bending position"
+  },
+  "36902": {
+   "group": "Layout space",
+   "tab": "View",
+   "text": "Connection point directions"
+  },
+  "36903": {
+   "group": "Connection point",
+   "tab": "Insert",
+   "text": "Change direction"
+  },
+  "36904": {
+   "group": "Routing aids",
+   "tab": "Insert",
+   "text": "Curve"
+  },
+  "36905": {
+   "group": "Routing connections",
+   "tab": "Edit",
+   "text": "New control point"
+  },
+  "36906": {
+   "group": "Routing connections",
+   "tab": "Edit",
+   "text": "Change curve run"
+  },
+  "36912": {
+   "group": "Phase busbar connection",
+   "tab": "Edit",
+   "text": "Generate"
+  },
+  "36916": {
+   "group": "Thermal design",
+   "tab": "View",
+   "text": "Airflow directions"
+  },
+  "36917": {
+   "group": "Thermal design",
+   "tab": "View",
+   "text": "Power dissipation density"
+  },
+  "36918": {
+   "group": "Thermal design",
+   "tab": "View",
+   "text": "Optimally air-conditioned areas"
+  },
+  "36919": {
+   "group": "Thermal design",
+   "tab": "View",
+   "text": "Airflow-specific reserved areas"
+  },
+  "36920": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Delete bending position"
+  },
+  "36922": {
+   "group": "Mounting aids",
+   "tab": "Insert",
+   "text": "Mounting line"
+  },
+  "36923": {
+   "group": "Routing connections",
+   "tab": "View",
+   "text": "Routing path network tracking"
+  },
+  "36925": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Exchange mounting surface"
+  },
+  "36929": {
+   "group": "Arrange",
+   "tab": "Edit",
+   "text": "Line up without gaps"
+  },
+  "36991": {
+   "group": "Graphic",
+   "tab": "Insert",
+   "text": "Graphic gallery"
+  },
+  "36993": {
+   "group": "Cut-outs",
+   "tab": "Insert",
+   "text": "Gallery"
+  },
+  "36994": {
+   "group": "3D viewpoint",
+   "tab": "View",
+   "text": "Gallery"
+  },
+  "37000": {
+   "group": "Symbols",
+   "tab": "Insert",
+   "text": "Symbols gallery"
+  },
+  "37008": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Move"
+  },
+  "37011": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Rotate"
+  },
+  "37012": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Scale"
+  },
+  "37013": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Stretch"
+  },
+  "37015": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Duplicate"
+  },
+  "37017": {
+   "group": "Arrange",
+   "tab": "Edit",
+   "text": "Align on grid"
+  },
+  "37018": {
+   "group": "Arrange",
+   "tab": "Edit",
+   "text": "Space horizontally"
+  },
+  "37019": {
+   "group": "Group",
+   "tab": "Edit",
+   "text": "Group"
+  },
+  "37020": {
+   "group": "Group",
+   "tab": "Edit",
+   "text": "Ungroup"
+  },
+  "37021": {
+   "group": "Arrange",
+   "tab": "Edit",
+   "text": "Foreground"
+  },
+  "37022": {
+   "group": "Arrange",
+   "tab": "Edit",
+   "text": "Background"
+  },
+  "37025": {
+   "group": "DXF / DWG",
+   "tab": "Insert",
+   "text": "Insert graphic"
+  },
+  "37027": {
+   "group": "Text",
+   "tab": "Insert",
+   "text": "Comment"
+  },
+  "37029": {
+   "group": "Cables / connections",
+   "tab": "Insert",
+   "text": "Cable"
+  },
+  "37030": {
+   "group": "Cables / connections",
+   "tab": "Insert",
+   "text": "Shield"
+  },
+  "37031": {
+   "group": "Group",
+   "tab": "Edit",
+   "text": "Device"
+  },
+  "37032": {
+   "group": "General",
+   "tab": "View",
+   "text": "Net tracking"
+  },
+  "37033": {
+   "group": "Devices",
+   "tab": "Insert",
+   "text": "Structure box"
+  },
+  "37034": {
+   "group": "Devices",
+   "tab": "Insert",
+   "text": "Device box"
+  },
+  "37035": {
+   "group": "Devices",
+   "tab": "Insert",
+   "text": "PLC box"
+  },
+  "37036": {
+   "group": "General",
+   "tab": "View",
+   "text": "Move contents (model view)"
+  },
+  "37040": {
+   "group": "2D panel layout",
+   "tab": "Insert",
+   "text": "Mounting panel (2D)"
+  },
+  "37048": {
+   "group": "Macros",
+   "tab": "Master data",
+   "text": "Create"
+  },
+  "37056": {
+   "group": "Text",
+   "tab": "Home",
+   "text": "Insert"
+  },
+  "37060": {
+   "group": "Options",
+   "tab": "Insert",
+   "text": "Coordinate input"
+  },
+  "37061": {
+   "group": "Options",
+   "tab": "Insert",
+   "text": "Increment"
+  },
+  "37068": {
+   "group": "Text",
+   "tab": "Edit",
+   "text": "Dock"
+  },
+  "37069": {
+   "group": "Text",
+   "tab": "Edit",
+   "text": "Undock"
+  },
+  "37080": {
+   "group": "General",
+   "tab": "View",
+   "text": "Paths"
+  },
+  "37087": {
+   "group": "General",
+   "tab": "View",
+   "text": "Insertion points"
+  },
+  "37100": {
+   "group": "Image",
+   "tab": "Insert",
+   "text": "Image file"
+  },
+  "37101": {
+   "group": "Image",
+   "tab": "Insert",
+   "text": "Hyperlink"
+  },
+  "37113": {
+   "group": "Devices",
+   "tab": "Insert",
+   "text": "Device connection point"
+  },
+  "37116": {
+   "group": "Cables / connections",
+   "tab": "Insert",
+   "text": "Connection"
+  },
+  "37120": {
+   "group": "Devices",
+   "tab": "Insert",
+   "text": "Bus port"
+  },
+  "37121": {
+   "group": "Options",
+   "tab": "Insert",
+   "text": "Relative coordinate input"
+  },
+  "37122": {
+   "group": "Options",
+   "tab": "Insert",
+   "text": "Base point shift"
+  },
+  "37127": {
+   "group": "Dimensioning",
+   "tab": "Insert",
+   "text": "Linear dimension"
+  },
+  "37134": {
+   "group": "General",
+   "tab": "View",
+   "text": "Empty texts"
+  },
+  "37136": {
+   "group": "General",
+   "tab": "View",
+   "text": "Cable connections"
+  },
+  "37137": {
+   "group": "General",
+   "tab": "View",
+   "text": "External targets"
+  },
+  "37144": {
+   "group": "Text",
+   "tab": "Home",
+   "text": "Path function text"
+  },
+  "37152": {
+   "group": "General",
+   "tab": "View",
+   "text": "Revision markers"
+  },
+  "37167": {
+   "group": "Group",
+   "tab": "Edit",
+   "text": "Grouping"
+  },
+  "37168": {
+   "group": "Text",
+   "tab": "Home",
+   "text": "Move"
+  },
+  "37171": {
+   "group": "Block",
+   "tab": "Edit",
+   "text": "Convert"
+  },
+  "37176": {
+   "group": "Terminals",
+   "tab": "Insert",
+   "text": "Terminal strip definition"
+  },
+  "37177": {
+   "group": "Plugs",
+   "tab": "Insert",
+   "text": "Plug definition"
+  },
+  "37189": {
+   "group": "General",
+   "tab": "View",
+   "text": "Potential tracking"
+  },
+  "37190": {
+   "group": "General",
+   "tab": "View",
+   "text": "Signal tracking"
+  },
+  "37196": {
+   "group": "Devices",
+   "tab": "Insert",
+   "text": "Connected functions"
+  },
+  "37197": {
+   "group": "Devices",
+   "tab": "Insert",
+   "text": "Busbar connection point"
+  },
+  "37227": {
+   "group": "Devices",
+   "tab": "Insert",
+   "text": "Part definition"
+  },
+  "37228": {
+   "group": "Options",
+   "tab": "Edit",
+   "text": "Smart connect"
+  },
+  "37230": {
+   "group": "General",
+   "tab": "View",
+   "text": "Invisible elements"
+  },
+  "37256": {
+   "group": "Arrange",
+   "tab": "Edit",
+   "text": "Align horizontally"
+  },
+  "37257": {
+   "group": "Options",
+   "tab": "Edit",
+   "text": "Direct editing"
+  },
+  "37258": {
+   "group": "Block",
+   "tab": "Edit",
+   "text": "Create"
+  },
+  "37259": {
+   "group": "Block",
+   "tab": "Edit",
+   "text": "Break up"
+  },
+  "37260": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Flip"
+  },
+  "37261": {
+   "group": "P&I diagram",
+   "tab": "Pre-planning",
+   "text": "Container"
+  },
+  "37262": {
+   "group": "P&I diagram",
+   "tab": "Pre-planning",
+   "text": "Container connection point"
+  },
+  "37265": {
+   "group": "View",
+   "tab": "Insert",
+   "text": "Model view"
+  },
+  "37266": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Cut off"
+  },
+  "37267": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Length"
+  },
+  "37268": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Fillet"
+  },
+  "37269": {
+   "group": "Graphic",
+   "tab": "Edit",
+   "text": "Chamfer"
+  },
+  "37270": {
+   "group": "Logic",
+   "tab": "Insert",
+   "text": "Guide rail"
+  },
+  "37271": {
+   "group": "Logic",
+   "tab": "Insert",
+   "text": "Mounting surface"
+  },
+  "37273": {
+   "group": "Logic",
+   "tab": "Insert",
+   "text": "Field size"
+  },
+  "37274": {
+   "group": "Logic",
+   "tab": "Insert",
+   "text": "Wiring comb front"
+  },
+  "37276": {
+   "group": "Options",
+   "tab": "Insert",
+   "text": "Input box on / off"
+  },
+  "37280": {
+   "group": "Terminals",
+   "tab": "Insert",
+   "text": "Distributed terminal"
+  },
+  "37290": {
+   "group": "Topology",
+   "tab": "Insert",
+   "text": "Routing point"
+  },
+  "37291": {
+   "group": "Topology",
+   "tab": "Insert",
+   "text": "Interruption point"
+  },
+  "37292": {
+   "group": "Topology",
+   "tab": "Insert",
+   "text": "Routing path"
+  },
+  "37293": {
+   "group": "Options",
+   "tab": "Edit",
+   "text": "Edit background"
+  },
+  "37294": {
+   "group": "View",
+   "tab": "Insert",
+   "text": "Copper unfold"
+  },
+  "37296": {
+   "group": "P&I diagram",
+   "tab": "Pre-planning",
+   "text": "Piping definition point"
+  },
+  "37297": {
+   "group": "P&I diagram",
+   "tab": "Pre-planning",
+   "text": "Piping connection point"
+  },
+  "37298": {
+   "group": "View",
+   "tab": "Insert",
+   "text": "2D drilling view"
+  },
+  "37300": {
+   "group": "Drilling pattern frame",
+   "tab": "Master data",
+   "text": "Insert"
+  },
+  "37305": {
+   "group": "Image",
+   "tab": "Insert",
+   "text": "QR code"
+  },
+  "37307": {
+   "group": "Terminals",
+   "tab": "Insert",
+   "text": "Terminal"
+  },
+  "37308": {
+   "group": "Plugs",
+   "tab": "Insert",
+   "text": "Pin"
+  },
+  "37309": {
+   "group": "PHOENIX CONTACT",
+   "tab": "Tools",
+   "text": "Marking"
+  },
+  "37310": {
+   "group": "PHOENIX CONTACT",
+   "tab": "Tools",
+   "text": "Planning"
+  },
+  "37311": {
+   "group": "PHOENIX CONTACT",
+   "tab": "Tools",
+   "text": "Configuration"
+  },
+  "37312": {
+   "group": "PHOENIX CONTACT",
+   "tab": "Tools",
+   "text": "clipx ENGINEER"
+  },
+  "37315": {
+   "group": "3D viewpoint",
+   "tab": "View",
+   "text": "Set as home view"
+  },
+  "37316": {
+   "group": "3D viewpoint",
+   "tab": "View",
+   "text": "Home view"
+  },
+  "38902": {
+   "group": "Eplan products",
+   "tab": "Eplan Cloud",
+   "text": "Data Portal"
+  },
+  "38903": {
+   "group": "Eplan products",
+   "tab": "Eplan Cloud",
+   "text": "Project generation (Free)"
+  },
+  "38904": {
+   "group": "Eplan products",
+   "tab": "Eplan Cloud",
+   "text": "Data management (Free)"
+  },
+  "38905": {
+   "group": "Eplan products",
+   "tab": "Eplan Cloud",
+   "text": "Project viewer"
+  },
+  "38906": {
+   "group": "Eplan products",
+   "tab": "Eplan Cloud",
+   "text": "Sourcing"
+  },
+  "38907": {
+   "group": "Eplan products",
+   "tab": "Eplan Cloud",
+   "text": "User management"
+  },
+  "38908": {
+   "group": "eLearning",
+   "tab": "Eplan Cloud",
+   "text": "Eplan eLearning"
+  },
+  "38909": {
+   "group": "Eplan services",
+   "tab": "Eplan Cloud",
+   "text": "Guided Installation"
+  },
+  "38910": {
+   "group": "Eplan services",
+   "tab": "Eplan Cloud",
+   "text": "Eplan Engineering Standard"
+  }
+ }
+}

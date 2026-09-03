@@ -47,10 +47,10 @@ Each sub-project has its own README with installation and usage details.
 ### Local EPLAN automation (P8)
 
 The local MCP server lets Claude drive a running EPLAN instance. It exposes
-**180 tools**: 8 connection/utility tools, **168 EPLAN actions** (`eplan_*`,
+**199 tools**: 8 connection/utility tools, **187 EPLAN action tools** (`eplan_*`,
 every one executed silently inside a C# script under QuietMode — no EPLAN
 dialog can block unattended runs), and **4 Asset Administration Shell tools**
-(`aas_*`) for AAS/AASX digital-twin export and import. The 168 include 4
+(`aas_*`) for AAS/AASX digital-twin export and import. The 187 include 4
 live-DataModel tools (`eplan_live_query_functions`, `eplan_live_query_pages`,
 `eplan_live_set_function_text`, `eplan_live_set_connection_designations`) that
 read and edit the currently open project's object model via runtime

@@ -3,8 +3,9 @@
 Remote control of **EPLAN Electric P8** from an LLM (e.g. Claude) via MCP (Model Context Protocol).
 
 The server connects to a running EPLAN instance through the EPLAN Remote Client API
-(pythonnet / CLR) and exposes **166 MCP tools**: 7 connection/utility tools,
-**155 EPLAN actions** (`eplan_*`), and **4 Asset Administration Shell tools**
+(pythonnet / CLR) and exposes **199 MCP tools** in the default `full` mode: 8 connection/utility
+tools, **187 `eplan_*` action tools** (183 typed wrappers plus the 4
+action-catalog/dispatch tools), and **4 Asset Administration Shell tools**
 (`aas_*`) for AAS/AASX digital-twin export and import.
 
 The EPLAN version is **auto-detected** (newest installed under
@@ -64,7 +65,7 @@ eplan-p8-mcp-server/
 │   ├── requirements.txt
 │   └── README.md                 # This file
 └── tools/
-    ├── validate_actions.py       # cross-check wrappers against the official docs RAG
+    ├── validate_actions.py       # cross-check wrappers against the 2027 EPLAN wiki
     └── action_validation_report.md
 ```
 
@@ -112,6 +113,10 @@ Or add it manually to `%USERPROFILE%\.claude\settings.json`:
 }
 ```
 
+By default the server publishes every tool. If the ~49,000 tokens of tool
+definitions per request matter to you, set `EPLAN_MCP_MODE=discovery` — see
+[Discovery mode](#discovery-mode-eplan_mcp_mode).
+
 ### 3. Connect
 
 Start EPLAN, open Claude Code, and say `connect to eplan`.
@@ -145,9 +150,115 @@ ssh -L 8321:localhost:8321 user@eplan-host   # keep open
 claude mcp add --transport http eplan http://localhost:8321/mcp
 ```
 
-Everything else (remoting setting in EPLAN, `connect to eplan`, all 166
+Everything else (remoting setting in EPLAN, `connect to eplan`, all 199
 tools) works exactly as in the local setup, because from the server's point
 of view EPLAN *is* local.
+
+---
+
+## Schema slimming (always on)
+
+Every tool definition is trimmed before it reaches the client. Pydantic
+auto-generates a `"title"` for each schema node (`export_file` becomes
+`"Export File"`) and a `"default": null` for each optional argument; neither
+tells a model anything the key name does not, and both are sent on every
+request. `strip_schema_boilerplate()` removes them after registration.
+
+| | tools | chars | ~tokens |
+|---|---:|---:|---:|
+| before | 199 | 197,369 | 49,342 |
+| after | 199 | 166,101 | 41,525 |
+
+31,268 characters, ~15.8%, with no loss of meaning — informative defaults
+(`0`, `false`, `""`) are kept. It is safe because `Tool.parameters` is only
+serialised out to the client; validation and dispatch go through
+`Tool.fn_metadata`. A test asserts behaviour is byte-identical with and without
+the strip.
+
+Set `EPLAN_MCP_KEEP_SCHEMA_TITLES=1` to disable it.
+
+Note that Claude Code already defers tool schemas — it shows the model a name
+list and loads a schema on demand — so there the practical cost of this server is
+around 1,800 tokens, not 49,000. The strip still helps there, because it shrinks
+each schema that gets loaded. See `../TOKEN_COST.md` for the full measurement.
+
+## Discovery mode (`EPLAN_MCP_MODE`)
+
+Every MCP request carries the **whole tool list**. With one MCP tool per
+wrapper that is a fixed, unavoidable tax on every single turn, paid before the
+model has done anything:
+
+| Mode | Tools published | Definition characters | Approx. tokens |
+|------|-----------------|-----------------------|----------------|
+| `full` (default) | 199 | 197,369 | ~49,300 |
+| `discovery` | 13 | 14,275 | ~3,600 |
+
+**92.8% smaller.** (Snapshot measurement - the full-mode figure grows with
+every new wrapper, the discovery figure does not. Measured by summing
+`len(name) + len(description) + len(json.dumps(input_schema))` over the tools
+the server actually registers. The same measurement at the 194-tool state that
+prompted this feature was 179,881 characters against 14,275, i.e. 92.1%
+saved - the ratio is stable because the hidden tier is what grows.)
+
+### What `discovery` publishes
+
+* the connection/session core - `eplan_status`, `eplan_versions`,
+  `eplan_servers`, `eplan_connect`, `eplan_disconnect`, `eplan_ping`
+* the action-catalog tier, which is already a discovery mechanism for the
+  ~1150 raw EPLAN actions - `eplan_action_catalog`, `eplan_action_describe`,
+  `eplan_action_run`, `eplan_ribbon_catalog`
+* three meta-tools that reach everything else:
+
+| Meta-tool | Purpose |
+|-----------|---------|
+| `eplan_tools_search(query, limit)` | Find hidden tools by name or by words in their documentation. Returns name + one-line summary + **parameter names only** (never a full schema - that would rebuild the problem). Always reports `total_matches`, the true count, even when the list is truncated. With no `query` it returns a grouped overview by source module. |
+| `eplan_tools_describe(names)` | Full signature, full docstring and per-parameter details for one name or a list of them. An unknown name comes back with near-matches instead of a bare error. |
+| `eplan_tools_call(name, arguments)` | Invoke a hidden tool. The argument keys are validated against the function's real signature first, so a typo is refused with the list of valid parameter names rather than silently dropped. Returns exactly what the tool would have returned directly. |
+
+Everything else - the ~180 typed action wrappers, the `aas_*` tools,
+`eplan_test`, `eplan_list_extensions` and any `EPLAN_MCP_EXTENSIONS` tools -
+stays fully usable, it just stops costing tokens on every turn. Extension packs
+become *searchable* rather than separately published, so a large private
+extension pack is free in discovery mode.
+
+### Enabling it
+
+`full` is the default; set the env var only if you want the smaller surface.
+
+```json
+{
+  "mcpServers": {
+    "eplan": {
+      "command": "python",
+      "args": ["YOUR_PATH\\eplan-p8-mcp-server\\mcp_server\\server.py"],
+      "env": { "EPLAN_MCP_MODE": "discovery" }
+    }
+  }
+}
+```
+
+```bash
+claude mcp add eplan -e EPLAN_MCP_MODE=discovery -- python YOUR_PATH\eplan-p8-mcp-server\mcp_server\server.py
+```
+
+An unrecognised value warns on stderr and falls back to `full`; it never stops
+the server from starting.
+
+### The tradeoff
+
+Discovery mode buys the token saving with **one extra round-trip**: the model
+must call `eplan_tools_search` (and usually `eplan_tools_describe`) before it
+can call a wrapper, instead of seeing the tool up front. That is one or two
+cheap calls per new task, against ~49,000 tokens on every request. It also
+means a tool the model never looks for is a tool it never learns exists, so
+`full` remains the right choice for short sessions, for clients with generous
+context, or when you want the model to browse the surface unprompted.
+
+The implementation lives in `mcp_server/tool_registry.py`. The index is built
+by introspecting the *same* functions `server.py` registers (`inspect.signature`
++ `inspect.getdoc`, resolved late through `(module, attribute)`), so it is never
+hand-maintained and cannot drift from the real tool set. It imports neither
+EPLAN nor pythonnet: `eplan_tools_search` works with EPLAN closed.
 
 ---
 
@@ -247,9 +358,16 @@ list — there is no per-tool `@mcp.tool()` boilerplate to write.
 Tips:
 - Write a meaningful docstring + type hints — they become the tool description
   and input schema the LLM relies on.
-- Verify action names/parameters against the official EPLAN P8 docs (see the
-  remote RAG at `https://rag2026.covaga.xyz`), then run
-  `python ../tools/validate_actions.py` to cross-check the whole wrapper set.
+- Verify action names/parameters against the official EPLAN P8 docs. The 2027
+  wiki (`https://rag2027.covaga.xyz`) serves one page per documented action at
+  `API Reference/Actions/<Name>.md` — `GET /file?path=...` returns the whole
+  page, `POST /search` (`{"query": ..., "topK": <=20}`) finds it. Then run
+  `python ../tools/validate_actions.py` to cross-check the whole wrapper set:
+  it confirms every declared `Action:` has a wiki page and that every `/KEY`
+  appears on that page **with the same casing**, and writes
+  `tools/action_validation_report.md`. Add `--completeness` to also sweep the
+  wiki for action pages missing from `tools/data/official_actions_2027.json`
+  (several thousand queries, minutes); `--rag-url` points it elsewhere.
 - Windows paths need escaping (`\\`) or forward slashes (`/`).
 
 ---
