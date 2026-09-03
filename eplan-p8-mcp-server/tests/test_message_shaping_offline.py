@@ -230,3 +230,107 @@ def test_template_emits_the_raw_fields_and_the_safe_level_accessor():
     assert str(MESSAGE_SCAN_CAP) in cs
     # The cast that a previous CS1061 regression turned into a total outage.
     assert "it.Current as BaseException" in cs
+
+
+# ---------------------------------------------------------------------------
+# the true total and the bounded slice
+#
+# Both come from covagashi's review on issue #23, confirmed by reflecting over
+# the live type on 2026-09-03:
+#   SysMessagesCollection properties:   Count, BookmarkIDStart, BookmarkIDEnd
+#   SysMessagesCollection constructors: (start, end, MessageLevel),
+#                                       (bookmark, MessageLevel), ()
+# ---------------------------------------------------------------------------
+
+def test_the_collections_own_count_wins_over_what_we_walked():
+    """
+    eplanMessagesScanned is capped at MESSAGE_SCAN_CAP, so using it as the
+    total under-reports in exactly the case where an accurate total matters:
+    when the scan cap is what stopped us. SysMessagesCollection.Count is the
+    real figure.
+    """
+    records = _raw(*[("m%d" % i, "Message") for i in range(MESSAGE_SCAN_CAP)])
+    out = shape({
+        "success": False,
+        "eplanMessagesRaw": records,
+        "eplanMessagesScanned": MESSAGE_SCAN_CAP,
+        "eplanMessagesTrueTotal": 4096,
+    })
+    assert out["eplanMessagesTotal"] == 4096
+    assert out["eplanMessagesTruncated"] is True
+
+
+def test_scanned_is_the_fallback_when_count_is_unavailable():
+    """The C# reads Count in its own try/catch, so it can legitimately be absent."""
+    records = _raw(*[("m%d" % i, "Message") for i in range(30)])
+    out = shape({"success": False, "eplanMessagesRaw": records,
+                 "eplanMessagesScanned": 30})
+    assert out["eplanMessagesTotal"] == 30
+
+
+@pytest.mark.parametrize("bogus", [0, -1, "many", None])
+def test_a_nonsense_count_falls_back_rather_than_being_trusted(bogus):
+    records = _raw(*[("m%d" % i, "Message") for i in range(7)])
+    out = shape({"success": False, "eplanMessagesRaw": records,
+                 "eplanMessagesScanned": 7, "eplanMessagesTrueTotal": bogus})
+    assert out["eplanMessagesTotal"] == 7
+
+
+def test_a_bounded_slice_says_nothing_extra():
+    """The good case is silent - no field, no tokens."""
+    out = shape({"success": False, "eplanMessagesRaw": _raw(("x", "Error")),
+                 "eplanMessagesScanned": 1, "eplanMessagesBounded": True})
+    assert "eplanMessagesUnbounded" not in out
+
+
+def test_an_unbounded_slice_is_flagged():
+    """
+    Only surfaced when the end bookmark could not be taken. Then the slice is
+    open at the top, entries from outside this action may have leaked in, and
+    the total is an upper bound rather than a fact - which the model should
+    know before quoting it back.
+    """
+    out = shape({"success": False, "eplanMessagesRaw": _raw(("x", "Error")),
+                 "eplanMessagesScanned": 1, "eplanMessagesBounded": False})
+    assert out["eplanMessagesUnbounded"] is True
+
+
+def test_the_bounding_hint_is_consumed_not_leaked():
+    out = shape({"success": False, "eplanMessagesRaw": _raw(("x", "Error")),
+                 "eplanMessagesScanned": 1, "eplanMessagesBounded": True,
+                 "eplanMessagesTrueTotal": 1})
+    for internal in ("eplanMessagesBounded", "eplanMessagesTrueTotal",
+                     "eplanMessagesRaw", "eplanMessagesScanned"):
+        assert internal not in out
+
+
+def test_template_takes_an_end_bookmark_and_bounds_the_slice():
+    """Guards the C# half of the same change."""
+    import eplan_connection as ec
+
+    mgr = ec.EPLANConnectionManager()
+    mgr.connected = True
+    captured = {}
+
+    class _Client:
+        SynchronousMode = True
+
+        def ExecuteAction(self, action):
+            path = action.split('"')[1]
+            with open(path, encoding="utf-8") as f:
+                captured["cs"] = f.read()
+            raise RuntimeError("stop here - the script content is what matters")
+
+    mgr.client = _Client()
+    mgr.execute_action("someAction /A:1", quiet_mode=True)
+    cs = captured["cs"]
+
+    assert 'new BaseException("MCP bookmark end"' in cs
+    assert "SysMessagesCollection(bookmark, bookmarkEnd, MessageLevel.Message)" in cs
+    assert "col.Count" in cs
+    # Both markers must be filtered out of the returned messages, not just the
+    # opening one.
+    assert '!= "MCP bookmark"' in cs
+    assert '!= "MCP bookmark end"' in cs
+    # The open-ended ctor survives as the fallback when no end bookmark exists.
+    assert "SysMessagesCollection(bookmark, MessageLevel.Message)" in cs

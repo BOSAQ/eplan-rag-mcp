@@ -155,6 +155,7 @@ LOGGED_RESULT_KEYS = (
     "eplanMessagesTotal",
     "eplanMessagesTruncated",
     "eplanMessagesLevels",
+    "eplanMessagesUnbounded",
     "message",
     "failedScriptPath",
 )
@@ -434,7 +435,13 @@ class EPLANConnectionManager:
         if not isinstance(raw, list):
             return result
 
-        total = result.get("eplanMessagesScanned")
+        # Prefer the collection's own Count over how many entries we walked.
+        # eplanMessagesScanned is bounded by MESSAGE_SCAN_CAP, so using it as
+        # the total under-reports whenever the scan cap is what stopped us -
+        # which is precisely the case where an accurate total matters.
+        total = result.get("eplanMessagesTrueTotal")
+        if not isinstance(total, int) or total < 1:
+            total = result.get("eplanMessagesScanned")
         if not isinstance(total, int):
             total = len(raw)
 
@@ -450,8 +457,10 @@ class EPLANConnectionManager:
         ordered = sorted((r for r in raw if isinstance(r, dict)), key=rank)
         kept = ordered[:MESSAGE_CAP]
 
+        bounded = result.pop("eplanMessagesBounded", None)
         result.pop("eplanMessagesRaw", None)
         result.pop("eplanMessagesScanned", None)
+        result.pop("eplanMessagesTrueTotal", None)
 
         texts = [r.get("text", "") for r in kept if r.get("text")]
         if not texts:
@@ -465,6 +474,12 @@ class EPLANConnectionManager:
         levels = [r.get("level") for r in kept if r.get("level")]
         if any(lvl != "Message" for lvl in levels):
             result["eplanMessagesLevels"] = levels
+
+        # Only surfaced when the slice could NOT be bounded, since that is the
+        # case where entries from outside this action may have leaked in and
+        # the total is therefore an upper bound rather than a fact.
+        if bounded is False:
+            result["eplanMessagesUnbounded"] = True
         return result
 
     def _log_dir(self) -> str:
@@ -676,7 +691,20 @@ public class QuietExecute_{exec_id}
             results["errorType"] = ex.GetType().FullName;
         }}
 
-        // Collect system messages emitted during this action (bookmark slice
+        // Close the slice at the top. With only a start bookmark the
+        // collection is open-ended, so anything EPLAN emits after this action
+        // - including from a later action in the same session - lands in it.
+        int bookmarkEnd = 0;
+        try
+        {{
+            using (var endMarker = new BaseException("MCP bookmark end", MessageLevel.Message))
+            {{
+                bookmarkEnd = endMarker.GetBookmarkID();
+            }}
+        }}
+        catch {{}}
+
+        // Collect system messages emitted during this action (bounded slice
         // only - never the whole historical tree).
         if (bookmark > 0)
         {{
@@ -687,7 +715,24 @@ public class QuietExecute_{exec_id}
                 // policy is unit-testable without string-matching generated
                 // C# - in the one file where a typo mutes all ~180 tools.
                 var raw = new List<Dictionary<string, string>>();
-                var col = new SysMessagesCollection(bookmark, MessageLevel.Message);
+                // Three-arg ctor (start, end, level) bounds the slice at both
+                // ends; fall back to the open-ended two-arg one only if the
+                // end bookmark could not be taken.
+                SysMessagesCollection col;
+                if (bookmarkEnd > bookmark)
+                {{
+                    col = new SysMessagesCollection(bookmark, bookmarkEnd, MessageLevel.Message);
+                    results["eplanMessagesBounded"] = true;
+                }}
+                else
+                {{
+                    col = new SysMessagesCollection(bookmark, MessageLevel.Message);
+                    results["eplanMessagesBounded"] = false;
+                }}
+                // Count is the collection's OWN total, so truncation is
+                // reported exactly rather than inferred from how many entries
+                // we managed to walk.
+                try {{ results["eplanMessagesTrueTotal"] = col.Count; }} catch {{}}
                 var it = col.GetSysMsgEnumerator();
                 int scanned = 0;
                 while (it.MoveNext() && scanned < {raw_scan_cap})
@@ -696,7 +741,9 @@ public class QuietExecute_{exec_id}
                     // be cast before .Message is reachable, or the generated
                     // script fails to compile and every action breaks.
                     var m = it.Current as BaseException;
-                    if (m != null && !string.IsNullOrEmpty(m.Message) && m.Message != "MCP bookmark")
+                    if (m != null && !string.IsNullOrEmpty(m.Message)
+                        && m.Message != "MCP bookmark"
+                        && m.Message != "MCP bookmark end")
                     {{
                         var rec = new Dictionary<string, string>();
                         rec["text"] = m.Message;
