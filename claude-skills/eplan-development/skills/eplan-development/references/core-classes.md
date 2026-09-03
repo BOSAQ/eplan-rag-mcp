@@ -166,3 +166,38 @@ public void OnActionEnd(IEventParameter iEventParameter)
     }
 }
 ```
+
+### Bound the slice at both ends when you're capturing one operation
+
+The two-arg constructor is **open at the top**: it returns everything from the
+start bookmark onward, so anything EPLAN emits after your operation — including
+from a later action in the same session — lands in it. If you want the messages
+belonging to one call, take a second bookmark afterwards and use the three-arg
+form.
+
+```csharp
+int start = 0, end = 0;
+using (var m = new BaseException("start", MessageLevel.Message)) { start = m.GetBookmarkID(); }
+
+// ...run the one thing you want messages for...
+
+using (var m = new BaseException("end", MessageLevel.Message)) { end = m.GetBookmarkID(); }
+
+var col = new SysMessagesCollection(start, end, MessageLevel.Message);
+int total = col.Count;          // the real total, so truncation can be reported honestly
+```
+
+Filter your own marker messages out of the results, or they show up as content.
+
+Two gotchas on this collection:
+
+- **`Trace` and `Assert` are never added to it**, so reading at `MessageLevel.Trace`
+  is not "wider" in any useful sense — it bounds the read, not what EPLAN stored.
+- **`MessageLevel`'s numeric order is not a severity order**:
+  `Trace=0, Message=1, Warning=2, Assert=3, Error=4, FatalError=5`. Sorting by
+  enum value puts `Assert` — documented as the lowest level of error and not
+  shown in the GUI — above `Warning`. Rank by an explicit list, not by value.
+
+**For an action's own failure, prefer `acc.GetException()`** over bookmarking the
+global tree — see *Executing Actions → how to find out WHY an action failed*. The
+bookmark pattern above is for watching EPLAN generally, e.g. from an event handler.
