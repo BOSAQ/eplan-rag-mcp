@@ -50,42 +50,6 @@ def _ensure_dirs():
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
 
-# Where caller-supplied C# is archived before it runs. Separate from the
-# generated-script directory, which is cleaned up after every execution.
-AUDIT_SCRIPT_DIR = os.path.join(_MCP_ROOT, "logs", "scripts")
-
-
-def _archive_caller_script(script_code: str):
-    """
-    Persist caller-supplied C# BEFORE running it, and return the archive
-    filename (or None if archiving failed).
-
-    Why: _execute_script deletes the generated .cs in its `finally`, and the
-    action trace records only `ExecuteScript /ScriptFile:<path>` - a path that
-    no longer exists by the time anyone reads the log. For generated wrapper
-    scripts that is fine, because the wrapper's own arguments are in the trace
-    and the C# is reproducible from them. For arbitrary caller-supplied code it
-    is not: the single highest-privilege operation this server offers was the
-    one that left no evidence of what it did.
-
-    Archiving happens BEFORE execution deliberately, so a script that crashes
-    EPLAN outright is still on disk afterwards.
-
-    Never raises - a failure to archive must not block the caller, it just
-    means the result carries no "audit_script" key.
-    """
-    try:
-        os.makedirs(AUDIT_SCRIPT_DIR, exist_ok=True)
-        digest = hashlib.sha256(script_code.encode("utf-8")).hexdigest()[:12]
-        name = "custom_%s_%s.cs" % (time.strftime("%Y%m%dT%H%M%S"), digest)
-        path = os.path.join(AUDIT_SCRIPT_DIR, name)
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(script_code)
-        return name
-    except Exception:
-        return None
-
-
 def _execute_script(script_content: str, timeout: float = 30.0) -> dict:
     """
     Execute a C# script in EPLAN and return results.
@@ -1231,6 +1195,51 @@ public class McpGetSysMessages
             "total_in_tree": inner.get("total"),
             "messages": inner.get("messages", []),
             "error": inner.get("error")}
+
+
+# ---------------------------------------------------------------------------
+# Audit trail for caller-supplied C#.
+#
+# Deliberately placed HERE, beside its only caller, rather than up with the
+# other script plumbing: fix/context-exception adds _preserve_failed_script at
+# that spot, and two unrelated helpers inserted at the same anchor conflict for
+# no reason other than adjacency.
+# ---------------------------------------------------------------------------
+
+# Where caller-supplied C# is archived before it runs. Separate from the
+# generated-script directory, which is cleaned up after every execution.
+AUDIT_SCRIPT_DIR = os.path.join(_MCP_ROOT, "logs", "scripts")
+
+
+def _archive_caller_script(script_code: str):
+    """
+    Persist caller-supplied C# BEFORE running it, and return the archive
+    filename (or None if archiving failed).
+
+    Why: _execute_script deletes the generated .cs in its `finally`, and the
+    action trace records only `ExecuteScript /ScriptFile:<path>` - a path that
+    no longer exists by the time anyone reads the log. For generated wrapper
+    scripts that is fine, because the wrapper's own arguments are in the trace
+    and the C# is reproducible from them. For arbitrary caller-supplied code it
+    is not: the single highest-privilege operation this server offers was the
+    one that left no evidence of what it did.
+
+    Archiving happens BEFORE execution deliberately, so a script that crashes
+    EPLAN outright is still on disk afterwards.
+
+    Never raises - a failure to archive must not block the caller, it just
+    means the result carries no "audit_script" key.
+    """
+    try:
+        os.makedirs(AUDIT_SCRIPT_DIR, exist_ok=True)
+        digest = hashlib.sha256(script_code.encode("utf-8")).hexdigest()[:12]
+        name = "custom_%s_%s.cs" % (time.strftime("%Y%m%dT%H%M%S"), digest)
+        path = os.path.join(AUDIT_SCRIPT_DIR, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(script_code)
+        return name
+    except Exception:
+        return None
 
 
 def execute_custom_script(script_code: str, timeout_seconds: float = 30.0) -> dict:
