@@ -49,6 +49,27 @@ def _ensure_dirs():
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
 
+def _preserve_failed_script(script_path: str):
+    """Copy a generated script aside so a compile failure stays diagnosable.
+
+    Mirrors EPLANConnectionManager._preserve_failed_script. Honours
+    EPLAN_MCP_LOG_DIR for the same reason the trace does: the tests must not
+    litter the package directory. Never raises - it runs on an error path.
+    """
+    try:
+        base = os.environ.get("EPLAN_MCP_LOG_DIR") or os.path.join(_MCP_ROOT, "logs")
+        dest_dir = os.path.join(base, "failed_scripts")
+        os.makedirs(dest_dir, exist_ok=True)
+        dest = os.path.join(dest_dir, os.path.basename(script_path))
+        with open(script_path, "r", encoding="utf-8") as src:
+            content = src.read()
+        with open(dest, "w", encoding="utf-8") as out:
+            out.write(content)
+        return dest
+    except Exception:
+        return None
+
+
 def _execute_script(script_content: str, timeout: float = 30.0) -> dict:
     """
     Execute a C# script in EPLAN and return results.
@@ -110,10 +131,30 @@ def _execute_script(script_content: str, timeout: float = 30.0) -> dict:
         start_time = time.time()
         while not os.path.exists(result_path):
             if time.time() - start_time > timeout:
-                return {
+                # Same blind spot as eplan_connection._run_generated_script:
+                # a bare message here reads to a caller exactly like a slow
+                # script that eventually worked, so the natural response is to
+                # retry - which cannot help when the cause is that the C# did
+                # not compile. Named explicitly, and the script is preserved,
+                # because it is the only evidence of a compile error.
+                preserved = _preserve_failed_script(script_path)
+                result = {
                     "success": False,
+                    "errorType": "McpScriptNoResult",
+                    "error": (
+                        "The script did NOT run: no result file appeared "
+                        "within %gs. EPLAN's ExecuteScript is synchronous "
+                        "here, so a merely slow script would still have "
+                        "written its result before returning - this usually "
+                        "means the C# failed to compile. Check "
+                        "eplan_get_system_messages for a compiler error."
+                        % timeout
+                    ),
                     "message": "Timeout waiting for script results",
                 }
+                if preserved:
+                    result["failedScriptPath"] = preserved
+                return result
             time.sleep(0.1)
 
         # Small delay to ensure file is fully written
