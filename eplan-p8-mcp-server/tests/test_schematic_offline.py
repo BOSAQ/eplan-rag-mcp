@@ -412,3 +412,64 @@ def test_script_without_extra_helpers_is_unchanged():
     a = live._script("Demo", "            results[\"x\"] = 1;\n")
     b = live._script("Demo", "            results[\"x\"] = 1;\n", extra_helpers="")
     assert a == b
+
+
+# ---------------------------------------------------------------------------
+# The tools must actually be PUBLISHED, not merely importable
+# ---------------------------------------------------------------------------
+
+SCHEMATIC_TOOL_NAMES = (
+    "eplan_live_symbol_catalog",
+    "eplan_live_create_page",
+    "eplan_live_place_symbol",
+    "eplan_live_connect_pins",
+    "eplan_live_read_page",
+    "eplan_live_remove_placement",
+)
+
+
+@pytest.fixture(scope="module")
+def published_full():
+    """Tool names build_app publishes in the default 'full' mode."""
+    import asyncio
+    import server
+    app, _registry, _ = server.build_app(mode="full")
+    return {t.name for t in asyncio.run(app.list_tools())}
+
+
+@pytest.mark.parametrize("name", SCHEMATIC_TOOL_NAMES)
+def test_tool_is_published_in_full_mode(name, published_full):
+    """
+    Exporting from api.actions is not enough - a function that server.py never
+    registers is invisible to a client, and nothing else in the suite would
+    notice.
+    """
+    assert name in published_full
+
+
+@pytest.mark.parametrize("name", SCHEMATIC_TOOL_NAMES)
+def test_tool_is_reachable_in_discovery_mode(name):
+    """
+    Discovery mode publishes a small core and hides the rest behind meta-tools.
+    Hidden must still mean REACHABLE: a tool the registry cannot resolve is
+    simply gone for any session running in that mode.
+    """
+    import server
+    _app, registry, _ = server.build_app(mode="discovery")
+    short = name[len("eplan_"):]
+    hit = registry.describe([short])
+    assert hit, "%s is not in the discovery registry" % name
+
+
+def test_published_docstrings_warn_that_writes_touch_a_real_project(published_full):
+    """
+    server.py passes __doc__ through unchanged, so these docstrings are the
+    model's only warning that a write is scoped to scratch by default.
+    """
+    for func in (S.live_create_page, S.live_place_symbol,
+                 S.live_connect_pins, S.live_remove_placement):
+        doc = func.__doc__ or ""
+        assert "WRITES" in doc, "%s does not say it writes" % func.__name__
+        assert "scratch" in doc.lower(), (
+            "%s does not mention the scratch-only default" % func.__name__
+        )
