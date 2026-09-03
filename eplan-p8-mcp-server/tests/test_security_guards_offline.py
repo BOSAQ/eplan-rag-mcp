@@ -6,7 +6,9 @@ the thing that goes wrong when the guard is missing, because that is what a
 future reader needs in order to decide whether a change is safe.
 """
 
+import io
 import os
+import re
 import sys
 
 import pytest
@@ -243,4 +245,125 @@ def test_execute_raw_action_points_at_the_validated_alternative():
     doc = execute_raw_action.__doc__ or ""
     assert "action_run" in doc, (
         "execute_raw_action should steer callers to the validated dispatcher"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Hand-built action strings.
+#
+# ~15 wrappers build their command line with f-strings instead of going through
+# _build_action, and so inherited NONE of its protection. Demonstrated end to
+# end before the fix:
+#
+#   export_pdf_pages(export_file="C:/out/a.pdf",
+#                    page_names=['=AP1/1" /EXPORTFILE:"C:/evil/pwn.pdf'])
+#
+# emitted a command whose SECOND /EXPORTFILE won when EPLAN re-parsed it, so the
+# PDF was written to the attacker's path and the caller still saw success:true.
+# ---------------------------------------------------------------------------
+
+from api.actions._base import _quote_param  # noqa: E402
+
+# EPLAN's own command-line parse regex, used to re-read what we emit.
+_EPLAN_PARSE = re.compile(r'/([a-zA-Z0-9_]+):(?:("([^"]*)"|([^\s]*)))')
+
+
+def _reparse(action):
+    """Parse an action string the way EPLAN does - last value for a key wins."""
+    out = {}
+    for m in _EPLAN_PARSE.finditer(action):
+        out[m.group(1)] = m.group(3) if m.group(3) is not None else m.group(4)
+    return out
+
+
+def test_quote_param_emits_a_quoted_token():
+    assert _quote_param("EXPORTFILE", "C:/out/a.pdf") == '/EXPORTFILE:"C:/out/a.pdf"'
+    assert _quote_param("PAGENAME1", "=AP1/1") == '/PAGENAME1:"=AP1/1"'
+
+
+def test_quote_param_refuses_a_value_that_would_open_a_second_parameter():
+    with pytest.raises(ValueError) as exc:
+        _quote_param("PAGENAME1", '=AP1/1" /EXPORTFILE:"C:/evil/pwn.pdf')
+    assert "double quote" in str(exc.value)
+
+
+def test_quote_param_refuses_a_key_that_is_not_a_bare_name():
+    with pytest.raises(ValueError):
+        _quote_param("NAME /OTHER", "x")
+
+
+def test_quote_param_renders_bools_and_none_like_build_action():
+    assert _quote_param("FLAG", True) == '/FLAG:"1"'
+    assert _quote_param("FLAG", False) == '/FLAG:"0"'
+    assert _quote_param("X", None) == '/X:""'
+
+
+@pytest.mark.parametrize("module_name,func_name,kwargs,evil_key", [
+    ("export_", "export_pdf_pages",
+     {"export_file": "C:/out/a.pdf"}, "page_names"),
+    ("export_", "export_dxf_pages",
+     {"destination_path": "C:/out"}, "page_names"),
+])
+def test_the_documented_injection_no_longer_reaches_the_action_string(
+        module_name, func_name, kwargs, evil_key, monkeypatch):
+    import importlib
+    mod = importlib.import_module("api.actions.%s" % module_name)
+    seen = {}
+
+    # Wrappers reach EPLAN by one of two seams; patch both so the test does not
+    # silently pass by returning "not connected" before the loop it is checking.
+    monkeypatch.setattr(mod, "_execute_with_quiet_mode",
+                        lambda action: seen.setdefault("action", action) or {"success": True},
+                        raising=False)
+
+    class _Spy:
+        def execute_action(self, action, *a, **k):
+            seen.setdefault("action", action)
+            return {"success": True}
+
+    monkeypatch.setattr(mod, "_get_connected_manager",
+                        lambda: (_Spy(), None), raising=False)
+
+    payload = dict(kwargs)
+    payload[evil_key] = ['=AP1/1" /EXPORTFILE:"C:/evil/pwn.pdf']
+    with pytest.raises(ValueError):
+        getattr(mod, func_name)(**payload)
+    assert "action" not in seen, "a malicious value still reached the action string"
+
+
+def test_a_legitimate_export_is_unchanged_and_reparses_correctly(monkeypatch):
+    """The guard must not alter output for valid input."""
+    from api.actions import export_ as E
+    seen = {}
+    monkeypatch.setattr(E, "_execute_with_quiet_mode",
+                        lambda action: seen.setdefault("action", action) or {"success": True})
+    E.export_pdf_pages(export_file="C:/out/a.pdf",
+                       page_names=["=AP1/1", "=AP1/2"],
+                       export_scheme="MyScheme")
+    parsed = _reparse(seen["action"])
+    assert parsed["TYPE"] == "PDFPAGESSCHEME"
+    assert parsed["EXPORTFILE"] == "C:/out/a.pdf"
+    assert parsed["EXPORTSCHEME"] == "MyScheme"
+    assert parsed["PAGENAME1"] == "=AP1/1"
+    assert parsed["PAGENAME2"] == "=AP1/2"
+
+
+def test_no_wrapper_still_interpolates_a_quoted_value_by_hand():
+    """
+    The class fix, not just the reported instance: nothing under api/actions may
+    build a `/KEY:"{value}"` token with an f-string again.
+    """
+    import glob
+    pattern = re.compile(r'''f(['"])/[A-Za-z0-9_]+(?:\{[^{}]+\})?:"\{[^{}]+\}"\1''')
+    offenders = []
+    for path in glob.glob(os.path.join(MCP, "api", "actions", "*.py")):
+        if os.path.basename(path) == "_base.py":
+            continue
+        with io.open(path, encoding="utf-8") as fh:
+            for n, line in enumerate(fh, 1):
+                if pattern.search(line):
+                    offenders.append("%s:%d" % (os.path.basename(path), n))
+    assert not offenders, (
+        "these build an action token by hand and bypass the quote guard - use "
+        "_quote_param: %s" % offenders
     )

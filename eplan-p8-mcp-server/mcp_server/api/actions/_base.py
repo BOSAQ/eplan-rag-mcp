@@ -47,6 +47,49 @@ def _get_connected_manager():
     return QuietManagerWrapper(manager), None
 
 
+def _quote_param(key: str, value, action_name: str = "<action>") -> str:
+    """
+    Render ONE `/KEY:value` token with the same guarantees `_build_action` gives.
+
+    Exists because ~15 wrappers hand-build their command line with f-strings
+    (`parts.append(f'/PAGENAME{i}:"{page}"')`) instead of going through
+    `_build_action`, and so inherited NONE of its protection. That is not
+    theoretical - it was demonstrated end to end:
+
+        export_pdf_pages(export_file="C:/out/a.pdf",
+                         page_names=['=AP1/1" /EXPORTFILE:"C:/evil/pwn.pdf'])
+
+    emitted a command whose SECOND /EXPORTFILE won when EPLAN re-parsed it, so
+    the PDF was written to the attacker's path and the caller still saw
+    success:true. Those sites build indexed keys (`PAGENAME1`, `SEL2`) that
+    `**kwargs` expresses awkwardly, hence a per-token helper rather than forcing
+    every one of them through `_build_action`.
+
+    Both guards from `_build_action` apply:
+      - the KEY must be a bare EPLAN parameter name, so it cannot smuggle a
+        second `/PARAM`;
+      - a double quote in the VALUE is refused, since it would let the value
+        close its own token.
+
+    Returns the token WITHOUT a leading space; callers join with " ".
+    """
+    if not _PARAM_KEY_RE.match(str(key)):
+        raise ValueError(
+            f'Refusing to build action {action_name!r}: parameter name {key!r} '
+            f'is not a bare EPLAN parameter name (must match [A-Za-z0-9_]+).'
+        )
+    if isinstance(value, bool):
+        value = "1" if value else "0"
+    value = "" if value is None else str(value)
+    if '"' in value:
+        raise ValueError(
+            f'Refusing to build action {action_name!r}: value for /{key} '
+            f'contains a double quote, which would let it inject additional '
+            f'parameters. Value: {value!r}'
+        )
+    return f'/{key}:"{value}"'
+
+
 def _build_action(action_name: str, **params) -> str:
     """
     Build an action string with parameters.
