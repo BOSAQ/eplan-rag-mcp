@@ -164,8 +164,9 @@ def test_logged_keys_cover_the_diagnostic_result_contract():
     field is introduced, add it to BOTH the result and this tuple - then extend
     the set below in the same commit, deliberately.
     """
-    expected = {"executor", "error", "errorType", "eplanMessages", "message",
-                "failedScriptPath"}
+    expected = {"executor", "error", "errorType", "message", "failedScriptPath",
+                "eplanMessages", "eplanMessagesTotal",
+                "eplanMessagesTruncated", "eplanMessagesLevels"}
     assert set(LOGGED_RESULT_KEYS) == expected, (
         "LOGGED_RESULT_KEYS changed to %r. If a diagnostic field was added to "
         "the action result, this is the right place to notice - update the "

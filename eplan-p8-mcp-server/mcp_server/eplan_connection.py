@@ -103,6 +103,40 @@ def _select_dotnet_runtime(runtime: str) -> None:
 
 EPLAN_EXE_NAME = "EPLAN.exe"
 
+# Severity ranking for the message slice, most important first.
+#
+# Deliberately a hand-written list rather than MessageLevel's numeric order,
+# which is NOT a severity order: Trace=0, Message=1, Warning=2, Assert=3,
+# Error=4, FatalError=5, so a naive sort puts Assert - documented as "the
+# lowest level of an error, which will not appear in GUI" - above Warning.
+#
+# Trace and Assert are omitted entirely: the SysMessagesCollection docs state
+# neither is ever added to the collection, so listing them would imply a
+# guarantee that does not exist. Anything unranked sorts last.
+MESSAGE_LEVEL_RANK = ("FatalError", "Error", "Warning", "Message")
+
+# Entries kept in eplanMessages after ranking. Half of all captures were
+# already hitting the old cap of 20 (measured over 1,463 logged actions on
+# 2026-09-03: 104 of the 206 entries carrying messages had exactly 20, and
+# nothing exceeded it), so the cap stays where it is - the fix is that the most
+# severe entries survive it, and that truncation is now reported, not that more
+# text comes back.
+MESSAGE_CAP = 20
+
+# Upper bound on what the generated C# collects before Python ranks it. Guards
+# against a pathological action pushing a huge payload through the result file,
+# while leaving ranking enough to choose from.
+MESSAGE_SCAN_CAP = 500
+
+# How long to wait for a generated script's result file before declaring that
+# the action did not run. EPLAN's ExecuteScript is synchronous on this path, so
+# a slow action still writes its result before returning - meaning this
+# expiring points at the script never having run (usually a compile error),
+# not at a slow action. A module constant so tests can shorten it without
+# patching the clock: eplan_connection.time is the shared time module, and
+# monkeypatching its sleep/time affects pytest itself.
+SCRIPT_RESULT_TIMEOUT_S = 30.0
+
 # Result keys copied into each actions.jsonl entry, on top of the always-present
 # ts / action / duration_s / success.
 #
@@ -111,22 +145,16 @@ EPLAN_EXE_NAME = "EPLAN.exe"
 # cannot be counted in a later audit - and the trace is the only record of what
 # this server actually did. Every audit finding about executor behaviour and
 # message truncation came out of these entries; a field absent from them is
-# invisible to the next one. test_log_action_offline.py fails if a key is added
-# to the result contract without being added here.
-# How long to wait for a generated script's result file before declaring that
-# the action did not run. EPLAN's ExecuteScript is synchronous on this path, so
-# a slow action still writes its result before returning - meaning this expiring
-# points at the script never having run (usually a compile error), not at a slow
-# action. A module constant so tests can shorten it without patching the clock:
-# eplan_connection.time is the shared time module, and monkeypatching its
-# sleep/time affects pytest itself.
-SCRIPT_RESULT_TIMEOUT_S = 30.0
-
+# invisible to the next one. test_log_action_offline.py fails if this tuple
+# changes without the expected set there being updated in the same commit.
 LOGGED_RESULT_KEYS = (
     "executor",
     "error",
     "errorType",
     "eplanMessages",
+    "eplanMessagesTotal",
+    "eplanMessagesTruncated",
+    "eplanMessagesLevels",
     "message",
     "failedScriptPath",
 )
@@ -383,6 +411,62 @@ class EPLANConnectionManager:
             self.connected = False
             return {"alive": False, "message": f"Ping failed: {e}"}
 
+    @staticmethod
+    def _shape_messages(result: dict) -> dict:
+        """Turn eplanMessagesRaw into a ranked, capped, honest eplanMessages.
+
+        Replaces a plain "first 20 in tree order" slice. In tree order the 20
+        kept were whichever EPLAN happened to log first, which for a chatty
+        action means twenty "Started opening database" lines while the actual
+        per-project error falls off the end - measured on a real
+        upgrade_projects call.
+
+        eplanMessages keeps its existing shape, a list of strings, so this is
+        additive rather than a contract break. Added alongside it:
+          eplanMessagesTruncated  only when entries were dropped
+          eplanMessagesTotal      how many EPLAN actually produced
+          eplanMessagesLevels     only when something above Message is present
+
+        The "only when" matters: on the healthy path this adds nothing to the
+        payload at all.
+        """
+        raw = result.get("eplanMessagesRaw")
+        if not isinstance(raw, list):
+            return result
+
+        total = result.get("eplanMessagesScanned")
+        if not isinstance(total, int):
+            total = len(raw)
+
+        def rank(record):
+            level = (record or {}).get("level") or ""
+            try:
+                return MESSAGE_LEVEL_RANK.index(level)
+            except ValueError:
+                return len(MESSAGE_LEVEL_RANK)
+
+        # sorted() is stable, so chronological order is preserved inside each
+        # severity bucket - a reader still sees the sequence EPLAN produced.
+        ordered = sorted((r for r in raw if isinstance(r, dict)), key=rank)
+        kept = ordered[:MESSAGE_CAP]
+
+        result.pop("eplanMessagesRaw", None)
+        result.pop("eplanMessagesScanned", None)
+
+        texts = [r.get("text", "") for r in kept if r.get("text")]
+        if not texts:
+            return result
+
+        result["eplanMessages"] = texts
+        result["eplanMessagesTotal"] = total
+        if total > len(texts):
+            result["eplanMessagesTruncated"] = True
+
+        levels = [r.get("level") for r in kept if r.get("level")]
+        if any(lvl != "Message" for lvl in levels):
+            result["eplanMessagesLevels"] = levels
+        return result
+
     def _log_dir(self) -> str:
         """Directory for actions.jsonl.
 
@@ -486,6 +570,7 @@ class EPLANConnectionManager:
             check_keys_code = ", ".join([f'"{k}"' for k in check_keys])
             escaped_result_path = result_path.replace("\\", "\\\\")
             escaped_action_name = cs_escape(action_name)
+            raw_scan_cap = MESSAGE_SCAN_CAP
 
             # Escape hatch: EPLAN_MCP_LEGACY_CLI=1 emits the original
             # CommandLineInterpreter-only template (no FindAction, no message
@@ -597,11 +682,15 @@ public class QuietExecute_{exec_id}
         {{
             try
             {{
-                var msgs = new List<string>();
+                // Collect text AND severity, and count everything seen. The
+                // ranking and the cap are applied on the Python side, so the
+                // policy is unit-testable without string-matching generated
+                // C# - in the one file where a typo mutes all ~180 tools.
+                var raw = new List<Dictionary<string, string>>();
                 var col = new SysMessagesCollection(bookmark, MessageLevel.Message);
                 var it = col.GetSysMsgEnumerator();
-                int guard = 0;
-                while (it.MoveNext() && guard++ < 20)
+                int scanned = 0;
+                while (it.MoveNext() && scanned < {raw_scan_cap})
                 {{
                     // SysMessagesEnumerator.Current is typed object - it must
                     // be cast before .Message is reachable, or the generated
@@ -609,12 +698,25 @@ public class QuietExecute_{exec_id}
                     var m = it.Current as BaseException;
                     if (m != null && !string.IsNullOrEmpty(m.Message) && m.Message != "MCP bookmark")
                     {{
-                        msgs.Add(m.Message);
+                        var rec = new Dictionary<string, string>();
+                        rec["text"] = m.Message;
+                        // Use MessageLevel. The shorter "Level" property does
+                        // not exist and raises CS1061, which breaks every
+                        // action - verified live 2026-09-01. ToString() rather
+                        // than an enum member, so a renamed member cannot
+                        // become a CS0117 at generation time. (Written without
+                        // the forbidden spelling on purpose: a test greps the
+                        // generated source for it.)
+                        try {{ rec["level"] = m.MessageLevel.ToString(); }}
+                        catch {{ rec["level"] = ""; }}
+                        raw.Add(rec);
+                        scanned++;
                     }}
                 }}
-                if (msgs.Count > 0)
+                if (raw.Count > 0)
                 {{
-                    results["eplanMessages"] = msgs;
+                    results["eplanMessagesRaw"] = raw;
+                    results["eplanMessagesScanned"] = raw.Count;
                 }}
             }}
             catch {{}}
@@ -817,6 +919,7 @@ public class QuietExecute_{exec_id}
                     "Could not parse action result file",
                 )
 
+            res_data = self._shape_messages(res_data)
             self._log_action(action, res_data, started)
             return res_data
 
