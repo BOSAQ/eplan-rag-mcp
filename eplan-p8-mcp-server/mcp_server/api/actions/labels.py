@@ -18,8 +18,14 @@ def create_labels(
     use_selection: bool = False
 ) -> dict:
     """
-    Create labels for project.
+    Produce a formatted, template-driven output file from project data.
     Action: label
+
+    Despite the name this is EPLAN's general labelling/reporting export, not
+    only sticker labels: it is the right tool whenever the user wants a
+    deliverable shaped by a scheme - a parts list they will print, a titled
+    and sorted table, a device list for a shop. For the raw underlying parts
+    data instead, use export_parts_list.
 
     Args:
         destination_file: Output file (txt, xls, xlsx, xml)

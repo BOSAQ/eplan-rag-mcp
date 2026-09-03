@@ -87,8 +87,12 @@ def project_management(
     only truly optional when this is invoked interactively from the EPLAN
     GUI with a project already selected there; called the way this MCP
     server calls it (command-line style), omitting it throws
-    System.ArgumentException - and this wrapper swallows that exception
-    silently, returning an unhelpful {"success": false} with no error text.
+    System.ArgumentException. That text now reaches you: the message-tree
+    capture puts EPLAN's own wording in the result's "eplanMessages" field.
+    Measured 2026-09-03 on EPLAN 2027.0.1 with TYPE:READPROJECTINFO and
+    PROJECTNAME omitted: {"success": false, "eplanMessages": ["No file
+    found. (Parameter 'FILENAME')"]}. Read eplanMessages before asking the
+    user anything or retrying.
 
     IMPORTANT - success:true is not always proof something real happened.
     Confirmed twice (2026-07-13): READPROJECTINFO returned success:true even
@@ -229,11 +233,13 @@ def upgrade_projects(project_path: str = None, folder_path: str = None) -> dict:
     - Does nothing (still reports success) for a project that is already on
       the current scheme version.
     - Basic projects (ZW9/ZX1) are only upgraded on a major version change.
-    - The result only echoes back what was sent (success + parameters). It
-      does NOT include EPLAN's own per-project result message - that stays in
-      EPLAN's message/log window. If success is false, there is no
-      diagnostic detail available here or from eplan_status; check EPLAN's
-      message window directly for the reason.
+    - EPLAN's own messages for the run come back in the result's
+      "eplanMessages" field, so read that first rather than sending the user
+      to EPLAN's message window. Caveat measured 2026-09-03 on EPLAN
+      2027.0.1: this action is chatty, and the capture is capped, so the 20
+      entries you get back can be nothing but "Started/Finished opening
+      database" lines with the per-project result pushed out. A capped
+      result is therefore not evidence that EPLAN said nothing useful.
 
     Args:
         project_path: Full path to a single project file to upgrade.
@@ -313,13 +319,16 @@ def synchronize_project(project_name: str = None, type: str = None, store_mode: 
                 parts. If the system parts database is write-protected or
                 locked (e.g. another EPLAN session/process has it open, or
                 it's a read-only master data source), this fails with
-                `{"success": false}` and no error detail anywhere in this
-                MCP (not in the result, not in eplan_status) - the real
-                reason only shows in EPLAN's own message window (seen in
-                practice as "La base de datos está protegida contra
-                escritura" / "The database is write protected"). If this
-                TYPE fails, don't assume the call itself was malformed -
-                tell the user to check EPLAN's message window, and that a
+                `{"success": false}`. When that was recorded (2026-07-13)
+                the reason was only visible in EPLAN's own message window
+                ("La base de datos está protegida contra escritura" / "The
+                database is write protected"). Since then the message-tree
+                capture landed, and EPLAN errors of that shape do reach the
+                result's "eplanMessages" - so check it first. This
+                particular failure has not been re-measured under the
+                capture, so if eplanMessages is empty the older advice still
+                applies: don't assume the call was malformed, and tell the
+                user to check EPLAN's message window, where a
                 locked/protected system parts database is a likely cause.
         store_mode: Only effective when type="SYSTEMPARTSTOPROJECT". Whether
             existing parts are overwritten:
