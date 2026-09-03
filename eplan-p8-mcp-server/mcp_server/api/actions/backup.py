@@ -2,7 +2,28 @@
 Backup and restore actions.
 """
 
+import os
+
 from ._base import _get_connected_manager, _build_action
+
+
+def _same_directory(path_a: str, path_b: str) -> bool:
+    """
+    True if two paths name the same directory on this filesystem.
+
+    Compared with normcase+abspath rather than samefile, deliberately: the
+    caller may pass a destination that does not exist yet, and samefile
+    raises on a missing path. Case folding matters because EPLAN runs on
+    Windows, where "C:\\MD" and "c:\\md" are the same folder.
+
+    Returns False rather than raising if either path cannot be resolved -
+    a guard that itself blows up is worse than the thing it guards against.
+    """
+    try:
+        norm = lambda p: os.path.normcase(os.path.abspath(p))
+        return norm(path_a) == norm(path_b)
+    except (TypeError, ValueError, OSError):
+        return False
 
 
 def backup_project(
@@ -215,11 +236,34 @@ def restore_masterdata(archive_name: str, destination_path: str) -> dict:
     the conversation, and make sure the user understands the target folder
     is not a safe place to keep unrelated files.
 
+    That constraint is now enforced rather than only documented: if
+    destination_path resolves to the archive's own folder, this refuses
+    before calling EPLAN. It is the one case with recorded data loss, and
+    the one the success flag would not have told you about.
+
     Args:
         archive_name: Path to archive file
         destination_path: Target directory. Must be different from the
                           archive_name's own folder — see warning above.
+                          Refused if it is not.
     """
+    if _same_directory(os.path.dirname(archive_name), destination_path):
+        return {
+            "success": False,
+            "error": (
+                "Refused: destination_path is the folder that contains "
+                "archive_name, and restore overwrites destination_path. "
+                "Recorded 2026-07-13, this removed unrelated sibling files "
+                "in that folder (other archives, _BAKINFO.XML, "
+                "_COMMENT.TXT, catalog files) and still reported "
+                '{"success": false}, so the flag would not have warned you. '
+                "Pass a separate directory - ideally an empty one - and "
+                "confirm the exact path with the user first."
+            ),
+            "archive_name": archive_name,
+            "destination_path": destination_path,
+        }
+
     manager, error = _get_connected_manager()
     if error:
         return error
