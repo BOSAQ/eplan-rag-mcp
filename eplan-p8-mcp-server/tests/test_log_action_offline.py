@@ -167,7 +167,8 @@ def test_logged_keys_cover_the_diagnostic_result_contract():
     expected = {"executor", "error", "errorType", "message", "failedScriptPath",
                 "eplanMessages", "eplanMessagesTotal",
                 "eplanMessagesTruncated", "eplanMessagesLevels",
-                "eplanMessagesUnbounded"}
+                "eplanMessagesUnbounded", "eplanMessagesFromContextOnly",
+                "errorFrom"}
     assert set(LOGGED_RESULT_KEYS) == expected, (
         "LOGGED_RESULT_KEYS changed to %r. If a diagnostic field was added to "
         "the action result, this is the right place to notice - update the "

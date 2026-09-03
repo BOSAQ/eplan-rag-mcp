@@ -156,6 +156,8 @@ LOGGED_RESULT_KEYS = (
     "eplanMessagesTruncated",
     "eplanMessagesLevels",
     "eplanMessagesUnbounded",
+    "eplanMessagesFromContextOnly",
+    "errorFrom",
     "message",
     "failedScriptPath",
 )
@@ -431,19 +433,66 @@ class EPLANConnectionManager:
         The "only when" matters: on the healthy path this adds nothing to the
         payload at all.
         """
-        raw = result.get("eplanMessagesRaw")
+        # Drain every internal hint first. The C# emits eplanMessagesBounded
+        # and eplanMessagesTrueTotal whenever it took a bookmark, which is on
+        # every action - so returning early before popping them leaked two
+        # internal fields into the response of every action that produced no
+        # messages at all, i.e. most of them. Caught by running the real
+        # template against live EPLAN; the offline tests all supplied messages.
+        raw = result.pop("eplanMessagesRaw", None)
+        ctx_raw = result.pop("eplanContextMessagesRaw", None)
+        scanned = result.pop("eplanMessagesScanned", None)
+        true_total = result.pop("eplanMessagesTrueTotal", None)
+        bounded = result.pop("eplanMessagesBounded", None)
+
         if not isinstance(raw, list):
+            raw = []
+        if not isinstance(ctx_raw, list):
+            ctx_raw = []
+        if not raw and not ctx_raw:
             return result
+
+        # Merge the per-call context collection with the bookmark slice,
+        # de-duplicating on text. The bookmark slice goes first so its
+        # chronology survives; anything only the context knew about is
+        # appended and counted, which is how we find out whether that channel
+        # is worth switching to. On the two actions measured so far the two
+        # sources agreed exactly, so this is expected to add nothing most of
+        # the time - eplanMessagesFromContextOnly appearing at all is the
+        # signal that the bookmark slice has a gap.
+        seen = set()
+        merged = []
+        for record in raw:
+            if not isinstance(record, dict):
+                continue
+            text = record.get("text")
+            if text and text not in seen:
+                seen.add(text)
+                merged.append(record)
+        context_only = 0
+        for record in ctx_raw:
+            if not isinstance(record, dict):
+                continue
+            text = record.get("text")
+            if text and text not in seen:
+                seen.add(text)
+                merged.append(record)
+                context_only += 1
+        raw = merged
 
         # Prefer the collection's own Count over how many entries we walked.
         # eplanMessagesScanned is bounded by MESSAGE_SCAN_CAP, so using it as
         # the total under-reports whenever the scan cap is what stopped us -
         # which is precisely the case where an accurate total matters.
-        total = result.get("eplanMessagesTrueTotal")
+        total = true_total
         if not isinstance(total, int) or total < 1:
-            total = result.get("eplanMessagesScanned")
+            total = scanned
         if not isinstance(total, int):
             total = len(raw)
+        # Count is the bookmark collection's own total and knows nothing about
+        # the context collection, so anything only the context supplied has to
+        # be added or the total under-reports what we are holding.
+        total += context_only
 
         def rank(record):
             level = (record or {}).get("level") or ""
@@ -457,10 +506,6 @@ class EPLANConnectionManager:
         ordered = sorted((r for r in raw if isinstance(r, dict)), key=rank)
         kept = ordered[:MESSAGE_CAP]
 
-        bounded = result.pop("eplanMessagesBounded", None)
-        result.pop("eplanMessagesRaw", None)
-        result.pop("eplanMessagesScanned", None)
-        result.pop("eplanMessagesTrueTotal", None)
 
         texts = [r.get("text", "") for r in kept if r.get("text")]
         if not texts:
@@ -480,6 +525,11 @@ class EPLANConnectionManager:
         # the total is therefore an upper bound rather than a fact.
         if bounded is False:
             result["eplanMessagesUnbounded"] = True
+        # Only when the context collection knew something the bookmark slice
+        # did not. Absent on the healthy path, and its presence is the
+        # evidence that would justify switching channels.
+        if context_only:
+            result["eplanMessagesFromContextOnly"] = context_only
         return result
 
     def _log_dir(self) -> str:
@@ -666,6 +716,69 @@ public class QuietExecute_{exec_id}
                 }}
                 results["success"] = success;
 
+                // The exception behind a silent success:false is already in
+                // the context we are holding. The Action docs say exceptions
+                // occurring during execution can be retrieved from the
+                // ActionCallingContext via GetException(). Measured
+                // 2026-09-03 on EPLAN 2027.0.1: after Action.Execute of
+                // projectmanagement /TYPE:READPROJECTINFO with PROJECTNAME
+                // omitted, this returns EPLAN's own no-file-found text
+                // naming the FILENAME parameter, as a BaseException.
+                //
+                // Read AFTER the single execution and never by re-running the
+                // action: success:false does not mean nothing happened
+                // (restore_masterdata overwrote a folder and took sibling
+                // files with it while reporting false), so harvesting a
+                // message by retrying could repeat a side effect.
+                try
+                {{
+                    var ctxEx = acc.GetException();
+                    if (ctxEx != null)
+                    {{
+                        results["error"] = ctxEx.Message;
+                        results["errorType"] = ctxEx.GetType().FullName;
+                        results["errorFrom"] = "context";
+                    }}
+                }}
+                catch {{}}
+
+                // ActionCallingContext.SysMessages is a per-call collection,
+                // scoped by construction rather than by bookmarking the global
+                // tree. Measured populated on the Action.Execute path WITHOUT
+                // CommandLineInterpreter's bCollectSysMessages flag, which is
+                // undocumented. Collected as a second source and merged with
+                // the bookmark slice below rather than replacing it: it has
+                // been compared on two actions only, so this widens coverage
+                // without betting the existing channel on a small sample.
+                try
+                {{
+                    var ctxMsgs = acc.SysMessages;
+                    if (ctxMsgs != null)
+                    {{
+                        var craw = new List<Dictionary<string, string>>();
+                        var cit = ctxMsgs.GetSysMsgEnumerator();
+                        int cscanned = 0;
+                        while (cit.MoveNext() && cscanned < {raw_scan_cap})
+                        {{
+                            var cm = cit.Current as BaseException;
+                            if (cm != null && !string.IsNullOrEmpty(cm.Message))
+                            {{
+                                var crec = new Dictionary<string, string>();
+                                crec["text"] = cm.Message;
+                                try {{ crec["level"] = cm.MessageLevel.ToString(); }}
+                                catch {{ crec["level"] = ""; }}
+                                craw.Add(crec);
+                                cscanned++;
+                            }}
+                        }}
+                        if (craw.Count > 0)
+                        {{
+                            results["eplanContextMessagesRaw"] = craw;
+                        }}
+                    }}
+                }}
+                catch {{}}
+
                 var returnParams = new Dictionary<string, string>();
                 string[] checkKeys = new string[] {{ {check_keys_code} }};
                 foreach (var key in checkKeys)
@@ -689,6 +802,10 @@ public class QuietExecute_{exec_id}
             results["success"] = false;
             results["error"] = ExceptionChain(ex);
             results["errorType"] = ex.GetType().FullName;
+            // Provenance matters for auditing: errorType was absent from all
+            // 1,463 logged actions before this change, so when it starts
+            // appearing we need to know which channel produced it.
+            results["errorFrom"] = "throw";
         }}
 
         // Close the slice at the top. With only a start bookmark the
