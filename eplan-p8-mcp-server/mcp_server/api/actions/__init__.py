@@ -163,6 +163,9 @@ from .scripts import (
 from .e3d import (
     create_installation_space,
     insert_3d_macro,
+    insert_model_view,
+    export_production_data_ras_center,
+    export_production_data_smart_mounting,
 )
 
 # Settings
@@ -171,6 +174,7 @@ from .settings import (
     import_settings,
     set_setting,
     set_project_setting,
+    lock_unlock_all_objects,
 )
 
 # Properties
@@ -334,6 +338,11 @@ from .interaction import (
     select_device,
 )
 
+# Preplanning / detail engineering
+from .planning import (
+    update_detail_engineering,
+)
+
 # Action catalog (generic tier - reach every EPLAN action, no wrapper needed)
 from .catalog import (
     action_catalog,
@@ -347,6 +356,7 @@ from ._base import (
     _get_connected_manager,
     _build_action,
 )
+
 
 __all__ = [
     # Project
@@ -395,11 +405,11 @@ __all__ = [
     # Scripts
     'register_script', 'unregister_script', 'execute_script',
     # E3D / 3D layout spaces
-    'create_installation_space', 'insert_3d_macro',
-
+    'create_installation_space', 'insert_3d_macro', 'insert_model_view',
+    'export_production_data_ras_center', 'export_production_data_smart_mounting',
     # Settings
     'export_settings', 'import_settings', 'set_setting', 'set_project_setting',
-
+    'lock_unlock_all_objects',
     # Properties
     'get_project_property', 'set_project_property', 'get_page_property',
     'set_page_property', 'get_property', 'set_property',
@@ -454,7 +464,8 @@ __all__ = [
     # GED interaction
     'start_ged_interaction', 'insert_device', 'insert_symbol_reference',
     'select_device',
-
+    # Preplanning / detail engineering
+    'update_detail_engineering',
     # Action catalog
     'action_catalog', 'action_describe', 'action_run', 'ribbon_catalog',
     # Base

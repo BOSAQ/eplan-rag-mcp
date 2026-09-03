@@ -4,6 +4,12 @@ EPLAN MCP Server
 Complete EPLAN automation server exposing all API actions via MCP protocol.
 Every action runs inside a C# script under QuietMode (no blocking dialogs).
 
+Two registration modes, selected with EPLAN_MCP_MODE:
+  full       (default) - every wrapper is its own MCP tool. Unchanged behaviour.
+  discovery            - publish a small core plus eplan_tools_search /
+                         _describe / _call; everything else is reached through
+                         them. See tool_registry.py and README.md.
+
 Requirements:
 - EPLAN installed
 - pip install pythonnet mcp
@@ -12,33 +18,105 @@ Requirements:
 import json
 import os
 import sys
+import types
 import functools
 from mcp.server.fastmcp import FastMCP
 from eplan_connection import get_manager, detect_installed_versions
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-mcp = FastMCP("EPLAN MCP Server")
-
 # Add API folders to path for imports
 sys.path.insert(0, os.path.join(SCRIPT_DIR, "api"))
 
 # Import the actions package (QuietMode execution)
 import api.actions as eplan_actions
+from tool_registry import ToolRegistry, make_meta_tools, META_TOOL_NAMES
+
+
+# ============================================================================
+# REGISTRATION MODE
+# ============================================================================
+# Every MCP request carries all tool definitions, so ~194 tools cost ~180k
+# characters (~45k tokens) per request. Discovery mode publishes only the tools
+# a session genuinely needs on turn one and hides the rest behind meta-tools.
+
+VALID_MODES = ("full", "discovery")
+
+# Published in discovery mode. The connection/session core is needed before
+# anything else can happen; the action-catalog tier is itself a discovery
+# mechanism (for the ~1150 raw EPLAN actions) and stays reachable directly.
+DISCOVERY_CORE_TOOLS = frozenset({
+    "eplan_status",
+    "eplan_versions",
+    "eplan_servers",
+    "eplan_connect",
+    "eplan_disconnect",
+    "eplan_ping",
+    "eplan_action_catalog",
+    "eplan_action_describe",
+    "eplan_action_run",
+    "eplan_ribbon_catalog",
+})
+
+DISCOVERY_META_TOOLS = tuple("eplan_" + n for n in META_TOOL_NAMES)
+
+
+def _resolve_mode(raw=None):
+    """
+    Normalise EPLAN_MCP_MODE. An unknown value warns on stderr and falls back to
+    "full" - a typo in a client config must never stop the server from starting.
+    """
+    mode = (raw or "full").strip().lower()
+    if mode == "":
+        return "full"
+    if mode in VALID_MODES:
+        return mode
+    print(
+        "Unknown EPLAN_MCP_MODE %r, falling back to 'full'. Valid values: %s."
+        % (raw, ", ".join(VALID_MODES)),
+        file=sys.stderr,
+    )
+    return "full"
+
+
+MODE = _resolve_mode(os.environ.get("EPLAN_MCP_MODE"))
+
+
+def _is_published(tool_name, mode):
+    """Does this tool get its own MCP tool definition in this mode?"""
+    if mode != "discovery":
+        return True
+    return tool_name in DISCOVERY_CORE_TOOLS or tool_name in DISCOVERY_META_TOOLS
+
+
+def _json_wrapper(f):
+    """Wrap an action function so the MCP tool returns formatted JSON."""
+
+    @functools.wraps(f)
+    def mcp_tool_wrapper(*args, **kwargs):
+        try:
+            res = f(*args, **kwargs)
+            return json.dumps(res, indent=2, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
+
+    mcp_tool_wrapper.__doc__ = f.__doc__ or ""
+    return mcp_tool_wrapper
 
 
 # ============================================================================
 # CONNECTION MANAGEMENT (Shared / Version-Agnostic)
 # ============================================================================
+# These are plain functions; _register_core() attaches them to an app so the
+# same definitions can be published on a fresh FastMCP instance (tests, and the
+# two modes) instead of being frozen by a decorator at import time.
 
-@mcp.tool()
 def eplan_status() -> str:
     """Get the current EPLAN connection status."""
     manager = get_manager()
     return json.dumps(manager.get_status(), indent=2)
 
 
-@mcp.tool()
 def eplan_versions() -> str:
     """List EPLAN versions installed on this machine.
 
@@ -55,7 +133,6 @@ def eplan_versions() -> str:
     }, indent=2)
 
 
-@mcp.tool()
 def eplan_servers() -> str:
     """List active EPLAN servers (running instances).
 
@@ -79,7 +156,6 @@ def eplan_servers() -> str:
     return json.dumps({"servers": servers, "count": len(servers)}, indent=2)
 
 
-@mcp.tool()
 def eplan_connect(host: str = None, port: str = None, version: str = None) -> str:
     """Connect to EPLAN.
 
@@ -115,21 +191,18 @@ def eplan_connect(host: str = None, port: str = None, version: str = None) -> st
     return json.dumps(result, indent=2)
 
 
-@mcp.tool()
 def eplan_disconnect() -> str:
     """Disconnect from EPLAN."""
     manager = get_manager()
     return json.dumps(manager.disconnect(), indent=2)
 
 
-@mcp.tool()
 def eplan_ping() -> str:
     """Check if EPLAN is responding."""
     manager = get_manager()
     return json.dumps(manager.ping(), indent=2)
 
 
-@mcp.tool()
 def eplan_test() -> str:
     """
     Show a MessageBox in EPLAN to verify the connection is working.
@@ -179,17 +252,63 @@ public class MCPTest
     }, indent=2)
 
 
+# Populated by _build_app(); read by eplan_list_extensions below.
+_loaded_extensions = []
+
+
+def eplan_list_extensions() -> str:
+    """List the extension modules (and their tools) loaded via EPLAN_MCP_EXTENSIONS."""
+    return json.dumps({
+        "env": os.environ.get("EPLAN_MCP_EXTENSIONS", ""),
+        "extensions": _loaded_extensions,
+    }, indent=2)
+
+
+# Tools defined in this module. The value is the attribute name, which is also
+# the tool name (these already carry the eplan_ prefix).
+_CORE_TOOLS = (
+    "eplan_status",
+    "eplan_versions",
+    "eplan_servers",
+    "eplan_connect",
+    "eplan_disconnect",
+    "eplan_ping",
+    "eplan_test",
+    "eplan_list_extensions",
+)
+
+
+def _register_core(app, registry, mode):
+    """Register the connection/session tools defined in this module."""
+    this_module = sys.modules[__name__]
+    for tool_name in _CORE_TOOLS:
+        func = getattr(this_module, tool_name)
+        published = _is_published(tool_name, mode)
+        registry.add(tool_name, this_module, tool_name, prefix="eplan_",
+                     published=published)
+        if published:
+            # Registered raw (not through _json_wrapper): these already return
+            # a JSON string, exactly as they did when they were decorated.
+            app.tool(name=tool_name)(func)
 
 
 # ============================================================================
 # DYNAMIC ACTIONS REGISTRATION
 # ============================================================================
 
-def register_actions(actions_module, prefix="eplan_"):
+def register_actions(actions_module, prefix="eplan_", app=None, registry=None, mode=None):
     """
     Dynamically registers all actions exported by the actions module.
     Wraps the functions to return formatted JSON.
+
+    Every action is added to the tool registry regardless of mode; in discovery
+    mode only the core set additionally gets its own MCP tool definition, and
+    the rest are reached through eplan_tools_search / _describe / _call.
     """
+    app = app if app is not None else globals().get("mcp")
+    registry = registry if registry is not None else globals().get("REGISTRY")
+    mode = mode if mode is not None else MODE
+
     for func_name in actions_module.__all__:
         if func_name.startswith('_'):
             continue
@@ -199,39 +318,16 @@ def register_actions(actions_module, prefix="eplan_"):
             continue
 
         tool_name = f"{prefix}{func_name}"
+        published = _is_published(tool_name, mode)
 
-        def make_wrapper(f):
-            @functools.wraps(f)
-            def mcp_tool_wrapper(*args, **kwargs):
-                try:
-                    res = f(*args, **kwargs)
-                    return json.dumps(res, indent=2, ensure_ascii=False)
-                except Exception as e:
-                    return json.dumps({"success": False, "error": str(e)}, indent=2)
+        if registry is not None:
+            # Store (module, attr) rather than the function object so the
+            # registry follows reloads and monkeypatching.
+            registry.add(tool_name, actions_module, func_name, prefix=prefix,
+                         published=published)
 
-            mcp_tool_wrapper.__doc__ = f.__doc__ or ""
-            return mcp_tool_wrapper
-
-        wrapped_tool = make_wrapper(func)
-        mcp.tool(name=tool_name)(wrapped_tool)
-
-
-# Register all actions (executed inside a C# script under QuietMode)
-register_actions(eplan_actions)
-
-# AAS (Asset Administration Shell) tools - optional, needs basyx-python-sdk.
-# Only a missing basyx dependency is treated as "optional"; any other import
-# error inside the package is a real bug and must surface loudly rather than
-# silently dropping the aas_* tools.
-try:
-    import api.aas as aas_tools
-    register_actions(aas_tools, prefix="aas_")
-except ModuleNotFoundError as e:
-    if e.name and e.name.split(".")[0] in ("basyx", "aas"):
-        print("AAS tools disabled: basyx-python-sdk not installed "
-              "(pip install basyx-python-sdk).", file=sys.stderr)
-    else:
-        raise
+        if published and app is not None:
+            app.tool(name=tool_name)(_json_wrapper(func))
 
 
 # ============================================================================
@@ -250,10 +346,17 @@ except ModuleNotFoundError as e:
 #     `import actions` (the api folder is already on sys.path)
 # A broken extension is reported on stderr and skipped - it never prevents
 # the server from starting.
+#
+# In discovery mode extension tools are indexed and searchable rather than
+# separately published, so a private extension pack costs no per-request tokens.
 
-def load_extensions(env_value: str = None):
+def load_extensions(env_value: str = None, app=None, registry=None, mode=None):
     """Import and register extension modules from EPLAN_MCP_EXTENSIONS dirs."""
     import importlib.util
+
+    app = app if app is not None else globals().get("mcp")
+    registry = registry if registry is not None else globals().get("REGISTRY")
+    mode = mode if mode is not None else MODE
 
     raw = env_value if env_value is not None else os.environ.get("EPLAN_MCP_EXTENSIONS", "")
     loaded = []
@@ -276,7 +379,8 @@ def load_extensions(env_value: str = None):
                     print(f"Extension {fname} has no __all__, skipping.", file=sys.stderr)
                     continue
                 prefix = getattr(module, "TOOL_PREFIX", "eplan_")
-                register_actions(module, prefix=prefix)
+                register_actions(module, prefix=prefix, app=app, registry=registry,
+                                 mode=mode)
                 loaded.append({"module": fname, "dir": ext_dir, "prefix": prefix,
                                "tools": list(module.__all__)})
                 print(f"Extension loaded: {fname} ({len(module.__all__)} tools, "
@@ -286,16 +390,120 @@ def load_extensions(env_value: str = None):
     return loaded
 
 
-_loaded_extensions = load_extensions()
+# ============================================================================
+# APP CONSTRUCTION
+# ============================================================================
+
+def build_app(mode="full", app=None, registry=None):
+    """
+    Build a fully registered server for `mode`.
+
+    Returns (app, registry, loaded_extensions). Everything the module used to do
+    at import time happens here, so tests (and the size measurement) can build a
+    second, independent instance without disturbing the live one.
+    """
+    mode = _resolve_mode(mode)
+    app = app if app is not None else FastMCP("EPLAN MCP Server")
+    registry = registry if registry is not None else ToolRegistry()
+
+    _register_core(app, registry, mode)
+
+    # All actions (executed inside a C# script under QuietMode)
+    register_actions(eplan_actions, app=app, registry=registry, mode=mode)
+
+    # AAS (Asset Administration Shell) tools - optional, needs basyx-python-sdk.
+    # Only a missing basyx dependency is treated as "optional"; any other import
+    # error inside the package is a real bug and must surface loudly rather than
+    # silently dropping the aas_* tools.
+    try:
+        import api.aas as aas_tools
+        register_actions(aas_tools, prefix="aas_", app=app, registry=registry, mode=mode)
+    except ModuleNotFoundError as e:
+        if e.name and e.name.split(".")[0] in ("basyx", "aas"):
+            print("AAS tools disabled: basyx-python-sdk not installed "
+                  "(pip install basyx-python-sdk).", file=sys.stderr)
+        else:
+            raise
+
+    loaded = load_extensions(app=app, registry=registry, mode=mode)
+
+    if mode == "discovery":
+        # The three meta-tools are the only way to reach everything above, so
+        # they exist only in discovery mode - full mode stays byte-identical.
+        meta = make_meta_tools(registry)
+        # The meta-tools are closures over this registry, so they live in a
+        # per-build namespace rather than on this module: two build_app calls in
+        # one process (tests, the size measurement) must not clobber each other.
+        meta_ns = types.SimpleNamespace(**meta)
+        for attr, func in meta.items():
+            tool_name = "eplan_" + attr
+            registry.add(tool_name, meta_ns, attr, prefix="eplan_", published=True)
+            app.tool(name=tool_name)(_json_wrapper(func))
+
+    strip_schema_boilerplate(app)
+
+    return app, registry, loaded
 
 
-@mcp.tool()
-def eplan_list_extensions() -> str:
-    """List the extension modules (and their tools) loaded via EPLAN_MCP_EXTENSIONS."""
-    return json.dumps({
-        "env": os.environ.get("EPLAN_MCP_EXTENSIONS", ""),
-        "extensions": _loaded_extensions,
-    }, indent=2)
+def strip_schema_boilerplate(app):
+    """
+    Delete zero-information keys from the generated JSON schemas.
+
+    Pydantic (via FastMCP) auto-generates a "title" for every schema node -
+    export_file becomes "Export File", and the root gets
+    "export_pdf_pagesArguments" - and emits "default": null for every optional
+    argument. None of it tells the model anything the key name and the absence
+    of a default do not already say, yet all of it is sent on every request
+    (and again on every on-demand schema load in clients that defer schemas).
+
+    Measured on this server: 31,268 characters, about 7,800 tokens, roughly
+    15% of the whole tool payload, for no loss of meaning. Informative
+    (non-null) defaults are preserved.
+
+    Safe because Tool.parameters is only ever serialised out to the client -
+    argument validation goes through Tool.fn_metadata.call_fn_with_arg_validation,
+    not through this dict. There is no public FastMCP option for this in
+    mcp 1.28.x (its StrictJsonSchema generator is wired only into *output*
+    schemas), hence the post-registration pass.
+
+    Set EPLAN_MCP_KEEP_SCHEMA_TITLES=1 to skip it if a client ever turns out to
+    depend on the titles.
+
+    Returns:
+        int: characters removed, for the benefit of tests and measurement.
+    """
+    if os.environ.get("EPLAN_MCP_KEEP_SCHEMA_TITLES") == "1":
+        return 0
+
+    def prune(node):
+        if isinstance(node, dict):
+            node.pop("title", None)
+            # Only null defaults: "default": 0 or "" or False is real information.
+            if "default" in node and node["default"] is None:
+                node.pop("default")
+            for value in node.values():
+                prune(value)
+        elif isinstance(node, list):
+            for value in node:
+                prune(value)
+
+    removed = 0
+    try:
+        tools = app._tool_manager._tools
+    except AttributeError:  # FastMCP internals moved; not worth crashing over
+        return 0
+
+    for tool in tools.values():
+        schema = getattr(tool, "parameters", None)
+        if not isinstance(schema, dict):
+            continue
+        before = len(json.dumps(schema))
+        prune(schema)
+        removed += before - len(json.dumps(schema))
+    return removed
+
+
+mcp, REGISTRY, _loaded_extensions = build_app(MODE)
 
 
 # ============================================================================
@@ -311,6 +519,11 @@ if __name__ == "__main__":
     else:
         print("WARNING: no EPLAN installation detected")
     print("-" * 40)
+    print(f"Mode: {MODE} ({len(REGISTRY.published_names())} of {len(REGISTRY)} "
+          f"tools published)")
+    if MODE == "discovery":
+        print("Hidden tools are reachable via eplan_tools_search / "
+              "eplan_tools_describe / eplan_tools_call")
     print("All actions run as eplan_* (C# script under QuietMode)")
     print("-" * 40)
 

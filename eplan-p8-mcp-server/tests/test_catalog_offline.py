@@ -548,3 +548,49 @@ def test_build_action_still_quotes_spaces_and_keeps_prequoted_values():
     # backslash paths are not mangled
     assert _build_action("backup", P="C:" + chr(92) + "temp") == (
         "backup /P:C:" + chr(92) + "temp")
+
+
+# ---------------------------------------------------------------------------
+# Ribbon-label search
+#
+# The point of this: people look for the words on the button. Nobody searches
+# for "GedEditGuiPosDialogShow" - they search for "Coordinate input". Labels are
+# captured from a live ribbon by tools/capture_ribbon_labels.py and joined onto
+# actions through the command id, because EPLAN leaves
+# RibbonCommand.ActionCommandLine empty for built-in buttons.
+# ---------------------------------------------------------------------------
+
+def test_registry_carries_ribbon_labels(registry):
+    actions, meta = registry
+    labelled = [e for e in actions.values() if (e.get("gui") or {}).get("labels")]
+    assert len(labelled) > 100, "ribbon labels missing from the registry"
+    assert meta["counts"].get("labelled_actions") == len(labelled)
+    for entry in labelled:
+        gui = entry["gui"]
+        assert all(isinstance(x, str) and x for x in gui["labels"])
+        assert all(" > " in p or p for p in gui["ribbon_paths"])
+
+
+def test_search_finds_an_action_by_its_button_text():
+    """The headline capability: search the GUI wording, get the action."""
+    result = catalog.action_catalog(search="Coordinate input", limit=10)
+    assert result["count"] >= 1
+    names = [a["name"] for a in result["actions"]]
+    assert "GedEditGuiPosDialogShow" in names, names
+    hit = next(a for a in result["actions"] if a["name"] == "GedEditGuiPosDialogShow")
+    assert "Coordinate input" in hit["labels"]
+    # and the result tells the caller where to find it in the GUI
+    assert hit["ribbon_paths"]
+
+
+def test_search_matches_the_ribbon_path_too():
+    result = catalog.action_catalog(search="3D layout space", limit=50)
+    assert result["count"] >= 1
+    assert any("3D layout space" in p
+               for a in result["actions"] for p in a["ribbon_paths"])
+
+
+def test_label_search_does_not_break_plain_name_search():
+    """Adding labels to the haystack must not disturb existing behaviour."""
+    assert "backup" in [a["name"] for a in
+                        catalog.action_catalog(search="backup", limit=200)["actions"]]

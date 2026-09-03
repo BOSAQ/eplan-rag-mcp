@@ -46,6 +46,7 @@ ACTIONS_DIR = os.path.join(REPO_ROOT, "mcp_server", "api", "actions")
 DEFAULT_OUT = os.path.join(ACTIONS_DIR, "data", "action_registry.json")
 DEFAULT_MFTOOLS = r"C:/Program Files/EPLAN/Platform/2027.0.1/Cfg/MFTools.xml"
 DEFAULT_LIVE = os.path.join(REPO_ROOT, "tools", "data", "live_actions_2027.json")
+DEFAULT_LABELS = os.path.join(REPO_ROOT, "tools", "data", "ribbon_labels_2027.json")
 
 # Same regex tools/validate_actions.py uses to read the wrapper docstrings.
 ACTION_RE = re.compile(r"Action:\s*([A-Za-z0-9_]+)")
@@ -71,7 +72,11 @@ def _new_entry(name):
         "documented": False,
         "doc_url": None,
         "params": [],
-        "gui": {"command_ids": [], "categories": [], "examples": []},
+        "gui": {"command_ids": [], "categories": [], "examples": [],
+                # Human-facing button text and where it sits in the ribbon,
+                # joined in from a live capture. This is what makes an action
+                # findable by the words someone would actually use.
+                "labels": [], "ribbon_paths": []},
         "wrapped_by": [],
         "origin": set(),
         # Filled from the live ActionManager.FindAction probe when available:
@@ -86,6 +91,8 @@ def _new_entry(name):
         "_command_ids": set(),
         "_categories": set(),
         "_examples": set(),
+        "_labels": set(),
+        "_ribbon_paths": set(),
     }
 
 
@@ -121,6 +128,50 @@ def load_live_probe(path, registry):
             continue
         entry["live_resolved"] = False
         stats["unresolved"] += 1
+    return stats
+
+
+def load_ribbon_labels(path, registry):
+    """
+    Attach ribbon button text to the actions those buttons run.
+
+    People search for the words on the button - "Coordinate input", "Page
+    macro" - not for GedEditGuiPosDialogShow. EPLAN will not hand over that
+    mapping directly (RibbonCommand.ActionCommandLine is empty for built-in
+    buttons), so tools/capture_ribbon_labels.py records command id -> label from
+    a live session and this joins it on through the same command ids MFTools.xml
+    uses.
+
+    Optional input: without it every entry simply keeps empty labels.
+    """
+    stats = {"found": False, "labelled_actions": 0, "labels": 0, "unmatched_ids": 0}
+    if not path or not os.path.isfile(path):
+        return stats
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    stats["found"] = True
+
+    # command id -> action, inverted from what the registry already knows
+    by_id = {}
+    for name, entry in registry.items():
+        for cid in entry["_command_ids"]:
+            by_id.setdefault(str(cid), name)
+
+    for cid, info in (data.get("commands") or {}).items():
+        action = by_id.get(str(cid))
+        if action is None:
+            stats["unmatched_ids"] += 1
+            continue
+        entry = registry[action]
+        text = (info.get("text") or "").strip()
+        tab = (info.get("tab") or "").strip()
+        group = (info.get("group") or "").strip()
+        if text:
+            entry["_labels"].add(text)
+            stats["labels"] += 1
+        if tab or group:
+            entry["_ribbon_paths"].add((tab + " > " + group).strip(" >"))
+    stats["labelled_actions"] = sum(1 for e in registry.values() if e["_labels"])
     return stats
 
 
@@ -340,6 +391,8 @@ def finalize(registry, examples_cap=6):
         e["gui"]["categories"] = sorted(e.pop("_categories"), key=_sort_key_numeric)
         # sort before capping so the cap does not depend on file order
         e["gui"]["examples"] = sorted(e.pop("_examples"))[:examples_cap]
+        e["gui"]["labels"] = sorted(e.pop("_labels"))
+        e["gui"]["ribbon_paths"] = sorted(e.pop("_ribbon_paths"))
         e.pop("_param_index")
         e["wrapped_by"] = sorted(set(e["wrapped_by"]))
         e["origin"] = sorted(e["origin"])
@@ -357,6 +410,9 @@ def main():
                         help="Path to official_actions_2027.json")
     parser.add_argument("--out", default=DEFAULT_OUT,
                         help="Output registry path")
+    parser.add_argument("--labels", default=DEFAULT_LABELS,
+                        help="Ribbon button labels captured by "
+                             "tools/capture_ribbon_labels.py (default: %(default)s). Optional.")
     parser.add_argument("--live", default=DEFAULT_LIVE,
                         help="Path to a live ActionManager.FindAction probe "
                              "(default: %(default)s). Optional; when absent "
@@ -372,6 +428,7 @@ def main():
     mf = load_mftools(args.mftools, registry, collisions)
     wrapper_funcs = load_wrappers(ACTIONS_DIR, registry)
     live = load_live_probe(args.live, registry)
+    labels = load_ribbon_labels(args.labels, registry)
 
     entries = finalize(registry, args.examples_cap)
 
@@ -394,6 +451,7 @@ def main():
                 "dialogs": mf["dialogs"],
                 "live_resolved": live["resolved"],
                 "live_unresolved": live["unresolved"],
+                "labelled_actions": labels["labelled_actions"],
             },
             "eplan_version": version.group(0) if version else "2027",
             "examples_cap": args.examples_cap,
@@ -431,6 +489,8 @@ def main():
     print("Registry written to {}".format(args.out))
     print("  total={total}  documented={documented}  wrapped={wrapped}  "
           "gui_only={gui_only}".format(**payload["_meta"]["counts"]))
+    print("  Ribbon labels: found={} actions_labelled={} labels={}"
+          .format(labels["found"], labels["labelled_actions"], labels["labels"]))
     print("  Live probe: found={} resolved={} unresolved={}"
           .format(live["found"], live["resolved"], live["unresolved"]))
     print("  MFTools: found={} used_actions={} categories={} samples={} dialogs={}"

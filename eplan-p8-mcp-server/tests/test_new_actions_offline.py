@@ -18,13 +18,13 @@ from types import SimpleNamespace
 import pytest
 
 from api.actions import _base, addons, cabinet, catalog, e3d, export_
-from api.actions import interaction, project, settings
+from api.actions import interaction, planning, project, settings
 
 
 # The modules whose wrappers this file covers. Each imported
 # `_get_connected_manager` into its own namespace, so each needs its own patch.
 WRAPPER_MODULES = (export_, e3d, project, addons, cabinet, settings,
-                   interaction)
+                   interaction, planning)
 
 # Same regex tools/validate_actions.py parses docstrings with.
 ACTION_RE = re.compile(r"Action:\s*([A-Za-z0-9_]+)")
@@ -85,15 +85,21 @@ def keys(command: str):
 
 WRAPPERS = [
     (export_.export_to_graphics, {"destination_path": "C:/out"}),
+    (e3d.insert_model_view,
+     {"layout_space": "LS1", "page_name": "=A1+B1/1", "dx": 100.0, "dy": 50.0}),
+    (e3d.export_production_data_ras_center, {}),
+    (e3d.export_production_data_smart_mounting, {}),
     (project.run_project_action, {"project_name": "C:/p.elk", "action": "export"}),
     (project.convert_base_projects, {}),
     (addons.load_api_module_net, {}),
     (addons.register_custom_property_editor, {}),
     (cabinet.create_graving_text, {}),
+    (settings.lock_unlock_all_objects, {}),
     (interaction.start_ged_interaction, {"name": "XMIaInsertMacro"}),
     (interaction.insert_device, {}),
     (interaction.insert_symbol_reference, {}),
     (interaction.select_device, {}),
+    (planning.update_detail_engineering, {}),
 ]
 
 WRAPPER_IDS = [fn.__name__ for fn, _ in WRAPPERS]
@@ -197,6 +203,36 @@ def test_load_api_module_net_camel_case_keys(capture):
     assert "/registerModule:Mod" in command
     assert "/unregister:MyAddin" in command
     assert "/unregisterInternal:Other" in command
+
+
+@pytest.mark.parametrize("fn", [
+    e3d.export_production_data_ras_center,
+    e3d.export_production_data_smart_mounting,
+], ids=["ras_center", "smart_mounting"])
+def test_automationml_exports_keep_pascal_casing(capture, fn):
+    command = cmd(fn(file_name="C:/out.aml", project_path="C:/p.elk",
+                     database_id="7", whole_project=True, config_scheme="Default"))
+    assert "/ConfigScheme:Default" in command   # not /CONFIGSCHEME
+    assert "/FileName:C:/out.aml" in command
+    assert "/ProjectPath:C:/p.elk" in command
+    assert "/DatabaseId:7" in command
+    assert "/WholeProject:1" in command
+    assert "/CONFIGSCHEME" not in command
+
+
+def test_update_detail_engineering_keeps_update_flag_casing(capture):
+    command = cmd(planning.update_detail_engineering(
+        project_name="C:/p.elk", update_macros=True, update_identifier=True,
+        update_placeholder=False, update_pipedata=False, update_parts=True))
+    assert "/UpdateMacros:1" in command       # not /UPDATEMACROS
+    assert "/UpdateIdentifier:1" in command
+    assert "/UpdatePlaceholder:0" in command
+    assert "/UpdatePipedata:0" in command
+    assert "/UpdateParts:1" in command
+    assert "/PROJECTNAME:C:/p.elk" in command  # ...but PROJECTNAME IS screaming
+    assert "/UPDATEMACROS" not in command
+
+
 def test_select_device_project_name_is_mixed_case(capture):
     """XPamsDeviceSelectionAction uses /ProjectName, not the /PROJECTNAME that
     most other actions use - the inconsistency is EPLAN's, and copying the
@@ -267,6 +303,22 @@ def test_export_to_graphics_screaming_keys(capture):
     assert "/USEPAGEFILTER:1" in command
 
 
+def test_insert_model_view_screaming_keys(capture):
+    command = cmd(e3d.insert_model_view(
+        layout_space="LS1", page_name="=A1/1", dx=100.0, dy=50.0,
+        project_name="C:/p.elk", structure="S", view_name="V",
+        angle=1, selection_scheme="Sel", style=2, item_labeling="Lbl",
+        viewpoint=7, root_elements="1#2", scale_setting=2, scale="1:10",
+        view_type=1))
+    for expected in ["/LAYOUTSPACE:LS1", "/PAGENAME:=A1/1", "/DX:100.0",
+                     "/DY:50.0", "/PROJECTNAME:C:/p.elk", "/STRUCTURE:S",
+                     "/VIEWNAME:V", "/ANGLE:1", "/SELECTIONSCHEME:Sel",
+                     "/STYLE:2", "/ITEMLABELING:Lbl", "/VIEWPOINT:7",
+                     "/ROOTELEMENTS:1#2", "/SCALESETTING:2", "/SCALE:1:10",
+                     "/VIEWTYPE:1"]:
+        assert expected in command, expected
+
+
 # ---------------------------------------------------------------------------
 # 3. None-valued optional parameters are omitted entirely
 # ---------------------------------------------------------------------------
@@ -291,9 +343,60 @@ def test_mandatory_only_calls_omit_the_optionals(capture):
         "ProjectAction /PROJECTNAME:C:/p.elk /Action:export"
 
 
+def test_partial_optionals_drop_only_the_none_ones(capture):
+    command = cmd(e3d.export_production_data_ras_center(
+        file_name="C:/out.aml", whole_project=True))
+    assert keys(command) == ["FileName", "WholeProject"]
+    assert "/ProjectPath" not in command
+    assert "/DatabaseId" not in command
+    assert "/ConfigScheme" not in command
+
+
+def test_zero_is_not_treated_as_missing(capture):
+    """style=0 means "wire frame" and viewpoint=0 means "default" - a
+    truthiness check instead of an `is None` check would silently drop both."""
+    command = cmd(e3d.insert_model_view(
+        layout_space="LS1", page_name="=A1/1", dx=1, dy=1,
+        style=0, viewpoint=0, scale_setting=0, view_type=0))
+    assert "/STYLE:0" in command
+    assert "/VIEWPOINT:0" in command
+    assert "/SCALESETTING:0" in command
+    assert "/VIEWTYPE:0" in command
+
+
+def test_empty_string_is_dropped(capture):
+    command = cmd(e3d.export_production_data_ras_center(
+        file_name="", config_scheme="Default"))
+    assert keys(command) == ["ConfigScheme"]
+
+
 # ---------------------------------------------------------------------------
 # 4. Bools render as 1/0
 # ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("value,rendered", [(True, "1"), (False, "0")])
+def test_bools_render_as_one_or_zero(capture, value, rendered):
+    assert "/WholeProject:" + rendered in cmd(
+        e3d.export_production_data_ras_center(whole_project=value))
+    assert "/BLACKWHITE:" + rendered in cmd(
+        export_.export_to_graphics(destination_path="C:/out", black_white=value))
+    assert "/UpdateMacros:" + rendered in cmd(
+        planning.update_detail_engineering(update_macros=value))
+    assert "/NOCLOSE:" + rendered in cmd(project.run_project_action(
+        project_name="C:/p.elk", action="export", no_close=value))
+    assert "/Complete:" + rendered in cmd(cabinet.create_graving_text(complete=value))
+    assert "/Editable:" + rendered in cmd(
+        addons.register_custom_property_editor(editable=value))
+    assert "/KeepSwappedConnPointInformation:" + rendered in cmd(
+        interaction.select_device(keep_swapped_conn_point_information=value))
+    assert "/USEPAGEFILTER:" + rendered in cmd(
+        export_.export_to_graphics(destination_path="C:/out", use_page_filter=value))
+
+
+def test_true_never_renders_as_python_repr(capture):
+    command = cmd(planning.update_detail_engineering(update_macros=True,
+                                                     update_parts=False))
+    assert "True" not in command and "False" not in command
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +422,17 @@ def test_already_quoted_value_is_not_double_quoted(capture):
     assert '""' not in command
 
 
+def test_spaces_quoted_across_modules(capture):
+    assert '/ProjectPath:"C:/My Projects/p.elk"' in cmd(
+        e3d.export_production_data_ras_center(project_path="C:/My Projects/p.elk"))
+    assert '/Folder:"C:/scratch dir"' in cmd(
+        project.convert_base_projects(folder="C:/scratch dir"))
+    assert '/register:"C:/My Addins/A.dll"' in cmd(
+        addons.load_api_module_net(register="C:/My Addins/A.dll"))
+    assert '/LAYOUTSPACE:"Layout Space 1"' in cmd(e3d.insert_model_view(
+        layout_space="Layout Space 1", page_name="=A1/1", dx=1, dy=1))
+
+
 # ---------------------------------------------------------------------------
 # 6. Raw parameter tails are appended verbatim, never re-quoted
 # ---------------------------------------------------------------------------
@@ -336,6 +450,13 @@ def test_run_project_action_appends_raw_tail(capture):
 def test_run_project_action_without_tail_has_no_trailing_space(capture):
     command = cmd(project.run_project_action(project_name="C:/p.elk", action="export"))
     assert command == command.strip()
+
+
+def test_lock_unlock_all_objects_bare_and_with_raw_args(capture):
+    assert cmd(settings.lock_unlock_all_objects()) == "LockUnlockAllObjects"
+    assert cmd(settings.lock_unlock_all_objects(
+        raw_args='  /KEY:value /OTHER:"a b"  ')) == \
+        'LockUnlockAllObjects /KEY:value /OTHER:"a b"'
 
 
 # ---------------------------------------------------------------------------

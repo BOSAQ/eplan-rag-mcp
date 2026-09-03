@@ -38,20 +38,26 @@ names (`tools/data/live_actions_2027.json`):
 
 ## How the actions are exposed
 
-**Tier 1 — typed tools (96 actions, 182 `eplan_*` tools).** Ten documented
+**Tier 1 — typed tools (101 actions, 183 `eplan_*` wrapper tools).** Fifteen documented
 actions that had no wrapper were added following the existing convention
 (`_build_action`, an `Action: <Name>` docstring line so `tools/validate_actions.py`
-keeps working, exported from `api/actions/__init__.py`):
+keeps working, exported from `api/actions/__init__.py`).
+
+Ten of them were executed against a live EPLAN before being included (see
+Testing):
 
 `exportToGraphics`, `XCCreateGravingtextAction`, `XPrjConvertBaseProjectsAction`,
 `ProjectAction`, `EplApiModuleActionNet`, `RegisterCustomPropertyEditorAction`,
 `XGedStartInteractionAction`, `XDLInsertDeviceAction`, `XEGActionInsertSymRef`,
 `XPamsDeviceSelectionAction`.
 
-Every one of these was executed against a live EPLAN before being included here
-(see Testing). Five further documented actions were deliberately left out
-because they could not be exercised on the reference installation - see
-"Deliberately not included" below.
+The remaining five ship as well, but **could not be exercised on the reference
+installation**, so each one's docstring opens with a delimited `NOT VERIFIED`
+block naming exactly what was and was not tested:
+
+`InsertModelViewAction`, `XAMlExportProductionData2RASCenterAction`,
+`XAMlExportProductionData2SmartMountingAction`, `XPlaUpdateDetailAction`,
+`LockUnlockAllObjects` — see "Shipped but not live-verified" below.
 
 **Tier 2 — catalog + validated dispatch (`catalog.py`), 4 tools** for the other
 ~1049. One tool per GUI action would have tripled the server's tool count and
@@ -95,7 +101,10 @@ So a button a human clicks can be found by name and then run with
 
 ## Testing
 
-**Offline: 316 passed, 0 skipped** (182 pre-existing, 134 new; zero regressions).
+**Offline: 411 passed, 2 skipped.** The 2 skips are the documentation
+cross-check for `XAMlExportProductionData2SmartMountingAction` and
+`LockUnlockAllObjects` — the only two wrapped actions whose EPLAN doc page 404s,
+so there is no official parameter table to check their `/KEY`s against.
 
 The highest-value assertions cross-check every emitted `/KEY` against
 `tools/data/official_actions_2027.json` verbatim, and pin parameter **casing**
@@ -104,7 +113,8 @@ The highest-value assertions cross-check every emitted `/KEY` against
 `EplApiModuleActionNet`). The wrapper test suite was mutation-checked: seeded
 faults produced exactly the expected failures.
 
-**Live (scratch only): every shipped wrapper, plus the catalog tier.**
+**Live (scratch only): every shipped wrapper except the five under
+"Shipped but not live-verified", plus the catalog tier.**
 Ran against a disposable clone of an EPLAN sample project in
 `%TEMP%\eplan_mcp_scratch`, upgraded to the 2027 scheme. No project or master
 data outside that scratch directory was written to.
@@ -130,29 +140,82 @@ rather than the theoretical "may block" warning. The residual caveat is that a
 call returning means the interaction was *started*, not finished: EPLAN is left
 in that editor mode.
 
-## Deliberately not included
+## Shipped but not live-verified
 
-Five documented actions are wrapped in the author's branch but are **not part of
-this change**, because they could not be made to work on the reference
-installation and the rule applied here was that only live-verified code ships:
+Five documented actions **are** wrapped and exported here, but their live
+behaviour could not be exercised on the reference installation (EPLAN Electric
+P8 2027.0.1, measured 2026-09-02/03). They ship marked rather than omitted: each
+wrapper's docstring opens with a delimited `NOT VERIFIED` block stating what is
+untested, the exact EPLAN error where one was seen, and what would be needed to
+verify it. Their command-string construction *is* covered by
+`tests/test_new_actions_offline.py` — what is unverified is EPLAN's response,
+not the string the wrapper emits.
+
+All five **do** resolve via `ActionManager.FindAction` on this installation:
+
+| Action | Module |
+|---|---|
+| `InsertModelViewAction` | `Eplan.EplApi.CommandLineActionsNet` |
+| `XAMlExportProductionData2RASCenterAction` | `AMLLog` |
+| `XAMlExportProductionData2SmartMountingAction` | `AMLLog` |
+| `XPlaUpdateDetailAction` | `PlanningLog` |
+| `LockUnlockAllObjects` | `Eplan.EplApi.CommandLineActionsNet` |
+
+So the actions exist here. Resolving is **not** proof of a licence — see the
+caveat below.
 
 | Action | Why it could not be verified |
 |---|---|
 | `InsertModelViewAction` | Needs a 3D layout space. Only the "Electric P8" variant is installed (`Electric P8/<ver>/Cfg/install.xml`), and `XCabCreateInstallationSpace` fails with *"New layout space function could not be run"*, so no fixture can be created. |
 | `XAMlExportProductionData2RASCenterAction` | Same 3D prerequisite: *"Export manufacturing data (Rittal - RiPanel Processing Center) function could not be run"*. |
-| `XAMlExportProductionData2SmartMountingAction` | Same 3D prerequisite, and its doc page 404s so its parameters could only be inferred from the RAS Center sibling. |
-| `XPlaUpdateDetailAction` | The Preplanning module is present and the action resolves, but no available project contains preplanning objects, so every call fails inside `PlanningLog`. |
-| `LockUnlockAllObjects` | Marked deprecated on the official index; fails with *"Unable to gain access to the database"* regardless of project state. |
+| `XAMlExportProductionData2SmartMountingAction` | Same 3D prerequisite (never executed; no error of its own was observed). Additionally it has **no documentation page at all**: 404 on eplan.help and absent from the 2027 API wiki (confirmed by sweeping all 98 action pages in the wiki index), so its parameters are **inferred** from the RAS Center sibling. If a call is silently ignored, wrong parameter names are the first suspect. |
+| `XPlaUpdateDetailAction` | The Preplanning module **is** present and the action resolves, but every call fails (*"...action ... of the PlanningLog module has failed"*) because no available project contains preplanning objects. This is a **missing fixture, not a proven licence limit** — retest against a project that has preplanning data. |
+| `LockUnlockAllObjects` | **Tested, and it does not work.** Marked deprecated on EPLAN's own action index, no doc page, and fails with *"Unable to gain access to the database"* whether or not a project is open. The cause is deprecation, not a licence. Prefer `set_setting` / `set_project_setting`. |
 
-A contributor whose installation includes Pro Panel or a preplanning project can
-verify these and submit them separately.
+A contributor whose installation includes Pro Panel, or who has a project
+containing preplanning data, can verify the first four and report back; the
+docstrings say precisely what to run.
 
 **An important caveat on availability data.** `ActionManager.FindAction`
 resolving an action means its module is *loaded*, **not** that it is licensed to
-run: module licensing is enforced at execution time. The 3D actions above all
-resolve, and still refuse to execute. So `live_resolved` in the registry, and
+run: module licensing is enforced at execution time. All five actions above
+resolve. Three of them were actually executed and all three failed:
+`XAMlExportProductionData2RASCenterAction` (consistent with run-time module
+enforcement), `XPlaUpdateDetailAction` (missing preplanning fixture, not a
+demonstrated licence limit) and `LockUnlockAllObjects` (deprecation, not a
+licence). The remaining two, `InsertModelViewAction` and
+`XAMlExportProductionData2SmartMountingAction`, were never reached at all. So `live_resolved` in the registry, and
 `action_catalog(available_only=True)`, are a necessary-not-sufficient filter -
 confirm by actually running the action.
+
+## Is the official list of 100 complete?
+
+`python tools/validate_actions.py --completeness` answers it against the 2027
+wiki, two independent ways (result in `tools/action_validation_report.md`):
+
+- **Direct.** `GET /file` for `API Reference/Actions/<Name>.md` for each of the
+  100 names in `tools/data/official_actions_2027.json`: **98 have a page, 2 do
+  not** - `LockUnlockAllObjects` and
+  `XAMlExportProductionData2SmartMountingAction`, the same two that 404 on
+  eplan.help. This direction is exact - `/file` is a yes/no lookup.
+- **Reverse.** Enumerate the wiki's own `API Reference/Actions/*.md` pages with
+  12,268 prefix/seed queries (`/search` caps `topK` at 20 and has no path
+  filter or pagination, so enumeration means many queries; the sweep recurses
+  only into prefixes that came back saturated). Result: **98 action pages, and
+  0 of them missing from our list.** The sweep is **capped** at prefix length
+  3 (`--max-depth`); 1,115 length-3 prefixes were still saturated and were not
+  expanded. The cap is justified empirically - length 3 cost 10,872 queries
+  and added zero pages over length 2 - but it is a cap, not proven exhaustion.
+
+So the wiki documents nothing we do not already know about, and our list is a
+strict superset of it by exactly those 2 deprecated/undocumented names.
+
+Caveat, stated because it is the only hole: two prefixes (`ep`, `eed`) fail
+deterministically with `D1_ERROR: D1 DB exceeded its CPU time limit` - they
+match too much of the index - so the automated sweep cannot see through them.
+They were drilled by hand (all 36 `ep?` prefixes, then 144 four-character
+prefixes under the sub-prefixes that also fail: `epe`, `epl`, `eps`, `eed`) and
+turned up no action page that is not already in the list.
 
 ## Known gaps
 
@@ -164,14 +227,51 @@ confirm by actually running the action.
 - EPLAN appears to lowercase parameter keys internally (an error echoed
   `/projectname:` for a `/PROJECTNAME:` call), so the casing discipline above may
   be stricter than required - documented casing is still what the wrappers send.
+- **19 emitted `/KEY`s across 15 pre-existing wrappers are in neither the 2027
+  wiki page nor the MFTools registry.** All of them pre-date the action-catalog
+  work, none has been retested live, so **none was changed** - they are listed
+  here so the next person does not rediscover them. Full table in
+  `tools/action_validation_report.md`. A key that is in neither source is not
+  automatically wrong (EPLAN's docs omit things, and MFTools only records the
+  keys the GUI happens to use), but where the docs name a *different* key for
+  the same job, the wrapper is the more likely suspect:
+
+  | Wrapper emits | Action | The wiki documents instead |
+  |---|---|---|
+  | `/FORMAT`, `/INSTALLATIONSPACE` | `export3d` | `INSTALLATIONSPACENAME`; the format is chosen with `TYPE` (`STEP`/`JT`) - which `export_.export_3d` never sends at all |
+  | `/DESTINATIONPATH`, `/SCHEME` | `generatemacros` | `WINDOWMACRODIR`, `PAGEMACRODIR`, `FILTERSCHEME` |
+  | `/EXPORTFILE`, `/PROJECTNAME` | `XEsUserPropertiesExportAction` | `XMLFile`, `Project` (same for the Import twin with `IMPORTFILE`) |
+  | `/EXPORTFILE`, `/PROJECTNAME` | `ExportNCData` | `TargetFile` / `TargetDirectory`, `ProjectName` |
+  | `/EXPORTFILE` | `ExportSegmentsTemplate` | `FILENAME` |
+  | `/DATASOURCE` | `XPartsSetDataSourceAction` | `DataSourceType`, `DataBaseFileName`, `Sql*`, `Container*` |
+  | `/PROJECTNAME` | `XMDeleteReprTypeAction` | no project parameter at all (`RepresentationType`, `Source`, `Destination`) |
+  | `/IMPORTSCHEME` | `import3d` | `SCHEME` |
+  | `/DESTINATIONPATH`, `/SOURCEPATH`, `/USEPAGEFILTER`, `/IMPORTFILE`+`/PROJECTNAME` | `masterdata`, `export`, `XMImportDCArticleDataAction`, `ImportPrePlanningData`, `ImportSegmentsTemplate`, `ExportProductionWiring` | not listed on the page - undocumented rather than contradicted |
+
+  Note `TYPE` is in the validator's `IGNORED_PARAMS`, so a wrapper that omits a
+  **mandatory** `TYPE` (as `export_3d` does) is invisible to the report.
+- **`/PROJECTNAME` vs the documented `/ProjectName`** in three wrappers -
+  `cabinet.calculate_cabinet_weight`, `production.export_nc_data`,
+  `production.export_production_wiring`. If the internal-lowercasing
+  observation above holds this is harmless; if it does not, `project_name` is
+  silently ignored and the current project is used. Left unchanged for the
+  same reason: unverified live.
 
 ## Refreshing after a version or licence change
 
 ```
 python tools/build_action_registry.py      # re-mine MFTools.xml + docs
-python -m pytest tests/ -q                 # 316 expected
+python -m pytest tests/ -q                 # 411 passed, 2 skipped expected
 python tools/validate_actions.py --out tools/action_validation_report.md
 ```
+
+`validate_actions.py` checks against the 2027 wiki (`https://rag2027.covaga.xyz`,
+override with `--rag-url`): an action is documented iff the wiki serves
+`API Reference/Actions/<Name>.md`, and every `/KEY` must appear on that page with
+the same casing. Add `--completeness` (or `--completeness-only`) to also sweep
+the wiki for action pages that are missing from
+`tools/data/official_actions_2027.json` - it takes thousands of queries and tens
+of minutes, so it is opt-in.
 
 Regenerate the availability data with `python tools/probe_live_actions.py`
 against a running EPLAN.

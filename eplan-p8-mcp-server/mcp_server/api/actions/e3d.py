@@ -308,3 +308,272 @@ public class InsertMacro_%EXECID%
     body = body.replace("%VARIANT%", str(int(variant)))
 
     return _execute_script(body)
+
+
+def insert_model_view(
+    layout_space: str,
+    page_name: str,
+    dx: float,
+    dy: float,
+    project_name: str = None,
+    structure: str = None,
+    view_name: str = None,
+    description: str = None,
+    angle: int = None,
+    selection_scheme: str = None,
+    style: int = None,
+    item_labeling: str = None,
+    viewpoint: int = None,
+    root_elements: str = None,
+    scale_setting: int = None,
+    scale: str = None,
+    view_type: int = None,
+    object_id: str = None
+) -> dict:
+    """
+    NOT VERIFIED on the reference machine - read the block below before use.
+    Insert a model view object of a layout space onto a page.
+    ======================================================================
+    !!! NOT VERIFIED - the live behaviour of this wrapper could not be
+    tested on the reference machine (EPLAN Electric P8 2027.0.1,
+    2026-09-02/03). Read this before relying on it. !!!
+    ======================================================================
+
+    Resolves, but was never executed. ActionManager.FindAction does find
+    InsertModelViewAction (module Eplan.EplApi.CommandLineActionsNet), so the
+    action exists in this installation. Resolving is NOT proof of a licence:
+    module licensing is enforced at run time, not at lookup time.
+
+    Why it could not be run: 3D / Pro Panel is not available on the reference
+    machine, so there is no layout space to insert a model view of, and none
+    can be created. Confirmed three ways:
+      1. Electric P8/<ver>/Cfg/install.xml lists only the "Electric P8"
+         variant - no Pro Panel entry.
+      2. XCabCreateInstallationSpace fails with "New layout space function
+         could not be run".
+      3. XAMlExportProductionData2RASCenterAction fails with "Export
+         manufacturing data (Rittal - RiPanel Processing Center) function
+         could not be run".
+    No error was observed from InsertModelViewAction itself - it was never
+    reached, because the prerequisite (a layout space) cannot exist here.
+
+    To verify: run this on an installation licensed for Pro Panel / 3D,
+    against a project that already contains a layout space, and check that a
+    model view is actually placed on the target page.
+
+    What IS covered: the command-string construction (parameter names, exact
+    casing, bool rendering, quoting, omission of None) is exercised offline by
+    tests/test_new_actions_offline.py. Only the live EPLAN behaviour is
+    unverified.
+    ======================================================================
+
+    Action: InsertModelViewAction
+
+    Args:
+        layout_space: Name of the layout space the model view is created for (mandatory)
+        page_name: Full name of the page the model view is inserted on (mandatory)
+        dx: Width of the model view (mandatory)
+        dy: Height of the model view (mandatory)
+        project_name: Project name with full path (optional; selected project if omitted)
+        structure: Structure identifier - mandatory when the layout space name
+                   is not unique within the project
+        view_name: Name of the model view
+        description: Description of the model view (multi-language string format allowed)
+        angle: Rotation of the model view content - 1 = 90 deg counter-clockwise,
+               2 = 90 deg in the opposite direction
+        selection_scheme: Name of the selection scheme; only used together with
+                          view_type = 1 (cabinet)
+        style: Display style - 0 wire frame, 1 hidden lines, 2 shading,
+               3 hidden lines / simplified, 4 shading / simplified
+        item_labeling: Name of the scheme applied for labeling items in the view
+        viewpoint: Direction objects are seen from - 0 default, 1 bottom, 2 top,
+                   3 left, 4 right, 5 front, 6 rear, 7 SE isometric,
+                   8 SW isometric, 9 NE isometric, 10 NW isometric
+        root_elements: FUNCTION3D_ID_RELATIVE values of the 3D placements to set
+                       as root elements, separated by "#"
+        scale_setting: Scaling type - 0 automatic, 1 fit, 2 manually defined
+        scale: Scale used to display objects in the model view
+        view_type: View type - 0 undefined, 1 cabinet, 2 EMI, 3 unfolding, 4 drill view
+        object_id: [OUT] Object id of the created model view. This is an output
+                   slot of the action; passing it in the command string has no
+                   effect, so leave it None.
+    """
+    manager, error = _get_connected_manager()
+    if error:
+        return error
+
+    action = _build_action(
+        "InsertModelViewAction",
+        PROJECTNAME=project_name,
+        LAYOUTSPACE=layout_space,
+        STRUCTURE=structure,
+        PAGENAME=page_name,
+        DX=dx,
+        DY=dy,
+        VIEWNAME=view_name,
+        DESCRIPTION=description,
+        ANGLE=angle,
+        SELECTIONSCHEME=selection_scheme,
+        STYLE=style,
+        ITEMLABELING=item_labeling,
+        VIEWPOINT=viewpoint,
+        ROOTELEMENTS=root_elements,
+        SCALESETTING=scale_setting,
+        SCALE=scale,
+        VIEWTYPE=view_type,
+        OBJECTID=object_id
+    )
+    return manager.execute_action(action)
+
+
+def export_production_data_ras_center(
+    file_name: str = None,
+    project_path: str = None,
+    database_id: str = None,
+    whole_project: bool = None,
+    config_scheme: str = None
+) -> dict:
+    """
+    NOT VERIFIED on the reference machine - read the block below before use.
+    Export the installation spaces of a project in AutomationML format for the
+    Rittal RiPanel Processing Center (RAS Center), which drives the machines
+    that create openings and cut mounting rails and wiring ducts.
+    ======================================================================
+    !!! NOT VERIFIED - the live behaviour of this wrapper could not be
+    tested on the reference machine (EPLAN Electric P8 2027.0.1,
+    2026-09-02/03). Read this before relying on it. !!!
+    ======================================================================
+
+    The EPLAN action was executed and it FAILED with:
+        "Export manufacturing data (Rittal - RiPanel Processing Center)
+         function could not be run"
+
+    ActionManager.FindAction does resolve
+    XAMlExportProductionData2RASCenterAction (module AMLLog), so the action
+    exists here. Resolving is NOT proof of a licence: module licensing is
+    enforced at run time. The failure is consistent with 3D / Pro Panel being
+    absent on the reference machine, which was confirmed three ways:
+      1. Electric P8/<ver>/Cfg/install.xml lists only the "Electric P8"
+         variant - no Pro Panel entry.
+      2. XCabCreateInstallationSpace fails with "New layout space function
+         could not be run".
+      3. this action's own failure message above.
+    There are no installation spaces here to export, and none can be created.
+
+    To verify: run this on an installation licensed for Pro Panel / 3D,
+    against a project containing installation spaces, and confirm the
+    AutomationML file is written.
+
+    What IS covered: the command-string construction (parameter names, exact
+    casing, bool rendering, quoting, omission of None) is exercised offline by
+    tests/test_new_actions_offline.py. Only the live EPLAN behaviour is
+    unverified.
+    ======================================================================
+
+    Action: XAMlExportProductionData2RASCenterAction
+
+    Args:
+        file_name: Full target path + file name of the AutomationML export. If
+                   empty, EPLAN shows a dialog - always pass it for unattended runs.
+        project_path: Project to export; it must already be open in P8. If the
+                      path is invalid the current project is used.
+        database_id: Database ID of the project to be exported
+        whole_project: Use the whole project as the input objects for the export
+                       instead of the current selection
+        config_scheme: Configuration scheme (optional). Default: most recently
+                       used configuration scheme.
+    """
+    manager, error = _get_connected_manager()
+    if error:
+        return error
+
+    action = _build_action(
+        "XAMlExportProductionData2RASCenterAction",
+        ProjectPath=project_path,
+        FileName=file_name,
+        DatabaseId=database_id,
+        WholeProject=whole_project,
+        ConfigScheme=config_scheme
+    )
+    return manager.execute_action(action)
+
+
+def export_production_data_smart_mounting(
+    file_name: str = None,
+    project_path: str = None,
+    database_id: str = None,
+    whole_project: bool = None,
+    config_scheme: str = None
+) -> dict:
+    """
+    NOT VERIFIED on the reference machine - read the block below before use.
+    Export production data of the installation spaces in AutomationML format for
+    Rittal Smart Mounting.
+    ======================================================================
+    !!! NOT VERIFIED - the live behaviour of this wrapper could not be
+    tested on the reference machine (EPLAN Electric P8 2027.0.1,
+    2026-09-02/03). Read this before relying on it. !!!
+    ======================================================================
+
+    Two separate problems: the live behaviour is untested, AND the parameter
+    names are guesses.
+
+    1. UNDOCUMENTED PARAMETERS - flagged loudly on purpose. There is NO
+       documentation page for the XAMlExportProductionData2SmartMounting
+       action - it 404s on eplan.help and is absent from the 2027 API wiki
+       (independently confirmed by sweeping all 98 action pages in the wiki
+       index). The parameter set below is INFERRED from its sibling
+       AutomationML export XAMlExportProductionData2RASCenterAction. Treat
+       the names and their casing as a best guess. EPLAN silently ignores a
+       key whose name or case is wrong, so if a call appears to do nothing,
+       wrong parameter names are the first suspect.
+
+    2. NEVER EXECUTED. ActionManager.FindAction does resolve the action
+       (module AMLLog), so it exists in this installation - but resolving is
+       NOT proof of a licence, since module licensing is enforced at run
+       time. It was not run because 3D / Pro Panel is unavailable on the
+       reference machine, confirmed three ways: (a) install.xml under
+       Electric P8/<ver>/Cfg lists only the "Electric P8" variant, no Pro
+       Panel; (b) XCabCreateInstallationSpace fails with "New layout space
+       function could not be run"; (c) the sibling RAS Center export fails
+       with "Export manufacturing data (Rittal - RiPanel Processing Center)
+       function could not be run". No error was observed from this action
+       itself. There are no installation spaces to export and none can be
+       created here.
+
+    To verify: on an installation licensed for Pro Panel / 3D and Rittal
+    Smart Mounting, run it against a project with installation spaces, and
+    check both that the AutomationML file appears AND that each parameter
+    actually takes effect (a silently ignored parameter means the guessed
+    name is wrong).
+
+    What IS covered: the command-string construction (parameter names as
+    written here, exact casing, bool rendering, quoting, omission of None) is
+    exercised offline by tests/test_new_actions_offline.py. Those tests prove
+    the wrapper emits what it claims to emit - they cannot prove EPLAN accepts
+    it.
+    ======================================================================
+
+    Action: XAMlExportProductionData2SmartMountingAction
+
+    Args:
+        file_name: Full target path + file name of the AutomationML export. If
+                   empty, EPLAN is expected to show a dialog.
+        project_path: Project to export; it must already be open in P8.
+        database_id: Database ID of the project to be exported
+        whole_project: Use the whole project as the input objects for the export
+        config_scheme: Configuration scheme (optional)
+    """
+    manager, error = _get_connected_manager()
+    if error:
+        return error
+
+    action = _build_action(
+        "XAMlExportProductionData2SmartMountingAction",
+        ProjectPath=project_path,
+        FileName=file_name,
+        DatabaseId=database_id,
+        WholeProject=whole_project,
+        ConfigScheme=config_scheme
+    )
+    return manager.execute_action(action)

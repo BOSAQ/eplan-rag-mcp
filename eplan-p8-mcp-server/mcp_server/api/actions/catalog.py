@@ -119,6 +119,9 @@ def _compact(entry):
         "categories": list(gui.get("categories") or []),
         "live_resolved": entry.get("live_resolved"),
         "module_name": entry.get("module_name"),
+        # What the button is called in the GUI, when this action is behind one.
+        "labels": list(gui.get("labels") or []),
+        "ribbon_paths": list(gui.get("ribbon_paths") or []),
     }
 
 
@@ -141,8 +144,11 @@ def action_catalog(
 
     Args:
         search: Case-insensitive substring matched against the action name, its
-            description and its parameter names (e.g. "pdf", "terminal",
-            "SCHEME"). Omit to browse everything.
+            description, its parameter names, AND the ribbon button text and
+            "tab > group" path where the action lives in the GUI. So the words
+            you would look for on screen work as search terms - "Coordinate
+            input", "Page macro", "Increment" - not only internal names like
+            "pdf" or "SCHEME". Omit to browse everything.
         category: EPLAN rights-management category id to filter by, as a
             string. These are numeric ids from MFTools.xml (e.g. "5", "16"),
             not human names - read them off the "categories" field of results
@@ -198,8 +204,16 @@ def action_catalog(
                 if cat not in [str(c) for c in cats]:
                     continue
             if needle:
+                gui = entry.get("gui") or {}
+                # Ribbon button text and its tab > group path are searched too,
+                # because people look for the words on the button ("Coordinate
+                # input") rather than the internal action name
+                # (GedEditGuiPosDialogShow).
                 haystack = " ".join(
-                    [name, entry.get("description") or ""] + _param_names(entry)
+                    [name, entry.get("description") or ""]
+                    + _param_names(entry)
+                    + list(gui.get("labels") or [])
+                    + list(gui.get("ribbon_paths") or [])
                 ).lower()
                 if needle not in haystack:
                     continue
