@@ -14,6 +14,7 @@ were proven interactively (see the eplan-development skill reference
 import uuid
 
 from ._base import cs_escape
+from ._base import _get_connected_manager, _build_action
 from .scripted import _execute_script
 
 
