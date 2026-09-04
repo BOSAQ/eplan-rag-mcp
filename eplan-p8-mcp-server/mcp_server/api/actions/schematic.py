@@ -1111,7 +1111,19 @@ def live_connect_pins(page: str, from_handle: str, from_pin: int,
                       allow_real_project: bool = False,
                       timeout_seconds: float = 90.0) -> dict:
     """
-    Draw a connection line between two placed devices' pins. WRITES - scratch-only.
+    Draw an EXPLICIT connection line between two pins. WRITES - scratch-only.
+
+    Usually the wrong tool. Two pins that FACE each other on a shared axis are
+    already wired: EPLAN draws an autoconnecting line between them and no object
+    exists on the page. Measured on a real page - four Functions, zero line
+    objects, two wires rendered. Drawing a line over that run adds a redundant
+    object on top of a connection EPLAN had already made.
+
+    Reach for this only when autoconnect cannot apply: a run that has to be
+    drawn explicitly across a page. For an ordinary turn place a corner
+    (`live_place_corner`); for a branch a T-node (`live_place_tnode`); for a
+    straight run between facing pins, place the two devices in line and draw
+    nothing.
 
     Addresses the endpoints by HANDLE and PIN INDEX rather than by coordinate,
     so the caller never computes a millimetre: the server resolves each pin's
@@ -1886,15 +1898,21 @@ def live_connect_pins_routed(page: str, from_handle: str, from_pin: int,
                              allow_real_project: bool = False,
                              timeout_seconds: float = 120.0) -> dict:
     """
-    Wire two pins that do NOT share an axis, via a corner. WRITES - scratch-only.
+    DRAW two segments through an elbow. WRITES - scratch-only.
 
-    live_connect_pins draws ONE straight segment, so it refuses a diagonal - a
-    single sloped line is not a wire EPLAN treats as a connection. That is the
-    honest behaviour, but it means only devices that happen to share an X or a Y
-    can be wired, which does not survive contact with a real page layout.
+    Not the normal way to turn a wire. The normal way is to place a corner
+    SYMBOL with `live_place_corner` and let EPLAN autoconnect into it - verified
+    live, that produces one clean logical connection between the two devices,
+    with the corner at neither end. This tool instead draws the line objects
+    itself, which leaves geometry on the page that EPLAN did not derive.
 
-    This draws TWO segments through a right-angled corner, which is how a wire
-    is actually run on a schematic.
+    It stays because a drawn elbow is still the answer when no autoconnecting
+    path exists - the free-routing case the `DynamicRouting` symbols cover, rare
+    in practice: 18 placements out of roughly 5000 on one measured production
+    project, all on a single page.
+
+    If both pins can be brought onto a shared axis, or joined by a placed
+    corner, prefer that.
 
     Args:
         page: Page both placements are on.
