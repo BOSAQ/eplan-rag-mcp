@@ -71,7 +71,10 @@ def test_renamed_output_is_reported_not_the_request(tmp_path, fake_export):
     assert result["requestedFileWritten"] is False
     assert result["writtenFiles"] == [str(tmp_path / "STRUCT-1.pdf")]
     assert result["requestedFile"] == str(requested)
-    assert "export scheme" in result["note"]
+    assert "did not write the requested basename" in result["note"]
+    # The note must not name export_scheme: export_pxf_project has no
+    # such parameter and shares this text.
+    assert "pass an explicit export_scheme" not in result["note"]
 
 
 def test_honoured_request_carries_no_note(tmp_path, fake_export):

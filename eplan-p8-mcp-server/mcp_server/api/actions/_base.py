@@ -169,12 +169,17 @@ def _report_written_files(result: dict, export_file: str,
 
     if not result["requestedFileWritten"]:
         if changed:
+            # Deliberately does not tell the caller to pass export_scheme:
+            # export_pxf_project has no such parameter, and naming a kwarg
+            # that does not exist invites exactly the failed retry that #28
+            # exists to prevent. The per-wrapper remedy is in each docstring.
             result["note"] = (
-                "EPLAN did not write the requested basename. The output "
-                "filename is decided by the export scheme, not by "
-                "export_file; pass an explicit export_scheme when the name "
-                "matters. writtenFiles is what actually changed in the "
-                "target directory."
+                "EPLAN did not write the requested basename. EPLAN decides "
+                "the output filename itself - from the active export scheme "
+                "for the PDF exports, from its own extension rule for PXF - "
+                "not from export_file. writtenFiles is what actually changed "
+                "in the target directory; see this wrapper's docstring for "
+                "how to pin the name."
             )
         else:
             result["note"] = (
