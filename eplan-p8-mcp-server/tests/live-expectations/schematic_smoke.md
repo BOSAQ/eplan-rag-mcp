@@ -88,3 +88,72 @@ EPLAN has also created a LOGICAL `Connection` between the two functions is NOT
 asserted here - that needs `generate_connections` + `export_connections` to
 settle. The tool's own result says the same thing in its `scopeNote`, so a
 caller cannot mistake "a line was drawn" for "the devices are wired".
+
+---
+
+# Connections: graphical vs logical
+
+**Measured** 2026-09-03, EPLAN 2027.0.1, against a clone of a production project.
+
+## `live_read_connections` reads real wiring
+
+The production go-by reports **3085** logical connections, e.g.
+
+```
++P03-CA[2] -> +P03-E-A[1]    kindOfWire=IndividualConnection
+```
+
+so the reader works against real data, not just synthetic pages.
+
+## The connection-line geometry bug this exposed
+
+`SetGraphics(p1, p2)` takes coordinates **RELATIVE to the line's `Location`**, not
+absolute page coordinates. Confirmed by reading real, human-drawn lines:
+
+| | Value |
+|---|---|
+| `Location` | (326.39, 346.71) — the absolute anchor |
+| `GetGraphics()` | a `Line` from (0,0) to (-1.27, 2.54) — relative |
+| `GraphicalConnectionPoints` | also relative |
+
+The first version of `live_connect_pins` passed **absolute** coordinates with
+`Location` left at its default, which put one end of every wire at the **page
+origin**:
+
+```
+DynamicConnectionLine  loc=(0,0)  pins=[(0,0), (139.7, 206.375)]
+```
+
+A line that visibly exists, reports success, and connects nothing — exactly the
+failure the pin-frame handling was written to prevent, arriving by another route.
+
+**Fixed**: anchor `Location` at the first pin, then draw the segment relative.
+After the fix:
+
+```
+DynamicConnectionLine  loc=(60.325, 206.375)
+                       pins=[(60.325, 206.375), (139.7, 206.375)]
+Function +-WA1         pin 0 = (60.325, 206.375)     <- exact match
+Function +-WA2         pin 0 = (139.7, 206.375)      <- exact match
+```
+
+## UNRESOLVED: a drawn line did not become a logical Connection
+
+With the geometry correct, both devices tagged (`+-WA1`, `+-WA2`) and
+`eplan_generate_connections` run successfully, the page still reported **0**
+logical connections.
+
+What was ruled out:
+- **Untagged devices** — tagging both made no difference.
+- **Wrong geometry** — the line's connection points now coincide exactly with
+  the device pins.
+- **Generation not running** — `generate_connections` returned success, and the
+  project's 3085 existing connections were unaffected.
+
+Still open: whether the `SL` symbol from `NFPA_symbol_en_US` carries real
+electrical connection points, whether generation is scheme- or scope-driven, or
+whether programmatically created lines need something further.
+
+**This is why `live_connect_pins` reports `lineDrawn`, never `wired`** — and why
+`live_read_connections` exists. The gap is real, and it is now measurable rather
+than assumed.
