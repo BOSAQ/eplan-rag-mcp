@@ -71,6 +71,7 @@ Traps that cost real debugging time, all encoded below:
     primitive #1 rather than an afterthought.
 """
 
+import math
 import re
 import uuid
 
@@ -102,6 +103,12 @@ __all__ = [
     "live_verify_page",
     "live_set_device_tag",
     "live_read_connections",
+    "live_connect_pins_routed",
+    "live_routing_catalog",
+    "live_place_connection_symbol",
+    "live_place_corner",
+    "live_place_tnode",
+    "live_place_connected",
 ]
 
 
@@ -126,6 +133,16 @@ COMMON_PAGE_TYPES = (
 # ---------------------------------------------------------------------------
 
 _HELPERS_SCHEMATIC = r'''
+    // The Symbol.Type values that are CONNECTION symbols rather than devices.
+    // Kept beside the placement code because Function.Create's refusal of one is
+    // otherwise unattributable.
+    static readonly string[] ROUTING_TYPES = new string[] {
+        "Routing", "DynamicRouting", "RoutingCross", "RoutingBridge",
+        "TNodeUp", "TNodeDown", "TNodeLeft", "TNodeRight",
+        "InterruptionPoint", "ConnectionDefinition",
+        "PotentialDefinition", "PotentialTerminal",
+        "Shielding", "CableDefinitionLine", "NetDefinition" };
+
     // ---- the scratch guard -------------------------------------------------
     // Re-checked HERE, inside the LockingStep, against the project EPLAN really
     // has focused. The Python pre-flight cannot be trusted on its own: the user
@@ -273,6 +290,14 @@ _HELPERS_SCHEMATIC = r'''
                     pd["index"] = pidx == null ? idx : Convert.ToInt32(pidx);
                     object des = TryRead(pin, "Designation", null);
                     if (des != null) pd["designation"] = SafeText(des);
+                    // WHICH WAY THE PIN FACES. Load-bearing for placement: two
+                    // pins autoconnect only when they face each other on a
+                    // shared axis, so a caller solving for where a device must
+                    // sit needs this and cannot infer it from geometry - an
+                    // offset of (0,+6) tells you the pin is at the top, not
+                    // that it points Up.
+                    object dir = TryRead(pin, "Direction", null);
+                    if (dir != null) pd["direction"] = SafeText(dir);
                     object ploc = TryRead(pin, "Location", null);
                     // RAW on purpose: whether this is absolute or an offset is
                     // decided on the Python side against the bounding box.
@@ -989,6 +1014,17 @@ def live_place_symbol(page: str, library: str, symbol: str, x: float, y: float,
             results["boundSignature"] = create.ToString();
             Type ptType = create.GetParameters()[2].ParameterType;
 
+            // A routing symbol is NOT a Function, and Function.Create refuses one
+            // with "S511085Cannot create function" - which says nothing about
+            // why. Measured on 2027 placing SPECIAL_en_US/CO. Name the real
+            // problem here instead.
+            string symKind = PropText(sym, "Type");
+            if (symKind != null && Array.IndexOf(ROUTING_TYPES, symKind) >= 0)
+                throw new Exception("Symbol " + SYMNAME + " is a " + symKind +
+                    " - a connection symbol, not a device. Function.Create cannot " +
+                    "place one. Use live_place_connection_symbol (or " +
+                    "live_place_corner / live_place_tnode) instead.");
+
             object fn = Activator.CreateInstance(funcType);
             Call(create, fn, new object[] {
                 page, variant, MakePoint(ptType, ax, ay), MakePoint(ptType, bx, by) });
@@ -1032,12 +1068,64 @@ def live_place_symbol(page: str, library: str, symbol: str, x: float, y: float,
 # 4. Connect two pins
 # ---------------------------------------------------------------------------
 
+# The pin-resolution script, shared by the straight and routed writers.
+# Two readers would drift, and a routed wire that disagreed with a straight
+# one about where a pin is would be very hard to explain.
+_PROBE_BODY = '''            object page = FindPage(project, PAGENAME);
+            object a = ResolveOnPage(page, FROMH);
+            object b = ResolveOnPage(page, TOH);
+            object pinA = FindPinAt(a, FROMP);
+            object pinB = FindPinAt(b, TOP);
+
+            Dictionary<string, object> ra = new Dictionary<string, object>();
+            ra["placement"] = DumpPlacement(a, true);
+            object la = TryRead(pinA, "Location", null);
+            if (la != null) ra["pinRaw"] = PtDict(la);
+            results["from"] = ra;
+
+            Dictionary<string, object> rb = new Dictionary<string, object>();
+            rb["placement"] = DumpPlacement(b, true);
+            object lb = TryRead(pinB, "Location", null);
+            if (lb != null) rb["pinRaw"] = PtDict(lb);
+            results["to"] = rb;
+            results["page"] = PropText(page, "Name");
+'''
+
+
+def _probe_pins(page_cs, from_cs, to_cs, from_pin, to_pin, timeout_seconds):
+    """Resolve two pins to absolute page coordinates. Writes nothing."""
+    body = _fill(
+        _PROBE_BODY,
+        PAGENAME='"%s"' % page_cs,
+        FROMH='"%s"' % from_cs,
+        TOH='"%s"' % to_cs,
+        FROMP=str(from_pin),
+        TOP=str(to_pin),
+    )
+    return _shape(_execute_script(
+        _script(_cls("PinProbe"), body, extra_helpers=_HELPERS_SCHEMATIC),
+        timeout=timeout_seconds,
+    ))
+
+
 def live_connect_pins(page: str, from_handle: str, from_pin: int,
                       to_handle: str, to_pin: int,
                       allow_real_project: bool = False,
                       timeout_seconds: float = 90.0) -> dict:
     """
-    Draw a connection line between two placed devices' pins. WRITES - scratch-only.
+    Draw an EXPLICIT connection line between two pins. WRITES - scratch-only.
+
+    Usually the wrong tool. Two pins that FACE each other on a shared axis are
+    already wired: EPLAN draws an autoconnecting line between them and no object
+    exists on the page. Measured on a real page - four Functions, zero line
+    objects, two wires rendered. Drawing a line over that run adds a redundant
+    object on top of a connection EPLAN had already made.
+
+    Reach for this only when autoconnect cannot apply: a run that has to be
+    drawn explicitly across a page. For an ordinary turn place a corner
+    (`live_place_corner`); for a branch a T-node (`live_place_tnode`); for a
+    straight run between facing pins, place the two devices in line and draw
+    nothing.
 
     Addresses the endpoints by HANDLE and PIN INDEX rather than by coordinate,
     so the caller never computes a millimetre: the server resolves each pin's
@@ -1080,39 +1168,10 @@ def live_connect_pins(page: str, from_handle: str, from_pin: int,
                 "error": "from and to are the same pin of the same placement; a "
                          "connection needs two distinct endpoints."}
 
-    # Step 1: resolve both pins WITHOUT writing, so the axis check happens on
-    # this side where it can be tested with EPLAN closed.
-    probe_body = '''            object page = FindPage(project, PAGENAME);
-            object a = ResolveOnPage(page, FROMH);
-            object b = ResolveOnPage(page, TOH);
-            object pinA = FindPinAt(a, FROMP);
-            object pinB = FindPinAt(b, TOP);
-
-            Dictionary<string, object> ra = new Dictionary<string, object>();
-            ra["placement"] = DumpPlacement(a, true);
-            object la = TryRead(pinA, "Location", null);
-            if (la != null) ra["pinRaw"] = PtDict(la);
-            results["from"] = ra;
-
-            Dictionary<string, object> rb = new Dictionary<string, object>();
-            rb["placement"] = DumpPlacement(b, true);
-            object lb = TryRead(pinB, "Location", null);
-            if (lb != null) rb["pinRaw"] = PtDict(lb);
-            results["to"] = rb;
-            results["page"] = PropText(page, "Name");
-'''
-    probe_body = _fill(
-        probe_body,
-        PAGENAME='"%s"' % page_cs,
-        FROMH='"%s"' % from_cs,
-        TOH='"%s"' % to_cs,
-        FROMP=str(from_pin),
-        TOP=str(to_pin),
-    )
-    probe = _shape(_execute_script(
-        _script(_cls("PinProbe"), probe_body, extra_helpers=_HELPERS_SCHEMATIC),
-        timeout=timeout_seconds,
-    ))
+    # Step 1: resolve both pins WITHOUT writing, so the geometry decision
+    # happens on this side where it can be tested with EPLAN closed.
+    probe = _probe_pins(page_cs, from_cs, to_cs, from_pin, to_pin,
+                        timeout_seconds)
     if not probe.get("success"):
         return probe
 
@@ -1828,4 +1887,1142 @@ def live_read_connections(page: str = None, limit: int = 200,
                 "the lines drawn on it - regenerate if in doubt."
                 % (out.get("total", 0), page)
             )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 10. Route a connection through a corner
+# ---------------------------------------------------------------------------
+
+def live_connect_pins_routed(page: str, from_handle: str, from_pin: int,
+                             to_handle: str, to_pin: int,
+                             corner: str = "x",
+                             allow_real_project: bool = False,
+                             timeout_seconds: float = 120.0) -> dict:
+    """
+    DRAW two segments through an elbow. WRITES - scratch-only.
+
+    Not the normal way to turn a wire. The normal way is to place a corner
+    SYMBOL with `live_place_corner` and let EPLAN autoconnect into it - verified
+    live, that produces one clean logical connection between the two devices,
+    with the corner at neither end. This tool instead draws the line objects
+    itself, which leaves geometry on the page that EPLAN did not derive.
+
+    It stays because a drawn elbow is still the answer when no autoconnecting
+    path exists - the free-routing case the `DynamicRouting` symbols cover, rare
+    in practice: 18 placements out of roughly 5000 on one measured production
+    project, all on a single page.
+
+    If both pins can be brought onto a shared axis, or joined by a placed
+    corner, prefer that.
+
+    Args:
+        page: Page both placements are on.
+        from_handle, to_handle: Handles from live_place_symbol or
+            live_read_page. Session-scoped.
+        from_pin, to_pin: Pin indices, from live_read_page's "pins".
+        corner: Which way the elbow turns.
+            "x" - leave the FROM pin horizontally, arrive at the TO pin
+                  vertically. Corner sits at (to.x, from.y).
+            "y" - leave vertically, arrive horizontally. Corner at
+                  (from.x, to.y).
+            Pick the one whose corner does not land on top of another device;
+            the result reports the corner so you can check.
+        allow_real_project: Must be True to write outside the scratch root.
+        timeout_seconds: Default 120s - this is two writes plus a read-back.
+
+    Returns:
+        {"success", "page", "corner", "segments": [{"handle", "from", "to"}, ...],
+         "undo": {...}, "page_after"}
+
+        BOTH segment handles come back, so the undo is complete - removing only
+        one would leave half a wire behind, which is worse than leaving the whole
+        thing.
+
+        As with live_connect_pins this reports what was DRAWN. Whether EPLAN has
+        created a logical Connection is a separate question - use
+        live_read_connections after eplan_generate_connections.
+    """
+    try:
+        page_cs = cs_escape(cs_text(page, "page"))
+        from_cs = cs_escape(cs_text(from_handle, "from_handle"))
+        to_cs = cs_escape(cs_text(to_handle, "to_handle"))
+        from_pin = cs_int(from_pin, "from_pin", minimum=0)
+        to_pin = cs_int(to_pin, "to_pin", minimum=0)
+        corner = cs_text(corner, "corner").strip().lower()
+    except SchematicValueError as exc:
+        return _err(exc)
+
+    if corner not in ("x", "y"):
+        return {"success": False,
+                "error": "corner must be 'x' (leave horizontally, arrive "
+                         "vertically) or 'y' (leave vertically, arrive "
+                         "horizontally); got %r." % corner}
+    if from_handle == to_handle and from_pin == to_pin:
+        return {"success": False,
+                "error": "from and to are the same pin; a connection needs two "
+                         "distinct endpoints."}
+
+    # Resolve both pins first, exactly as live_connect_pins does, so the
+    # geometry decision happens on this side where it is testable offline.
+    probe = _probe_pins(page_cs, from_cs, to_cs, from_pin, to_pin,
+                        timeout_seconds)
+    if not probe.get("success"):
+        return probe
+    pa = _pin_point(probe.get("from"), from_pin)
+    pb = _pin_point(probe.get("to"), to_pin)
+    if pa is None or pb is None:
+        return {
+            "success": False,
+            "error": "Could not establish an absolute page coordinate for %s. A "
+                     "pin whose frame is unknown cannot be routed by index."
+                     % ("the 'from' pin" if pa is None else "the 'to' pin"),
+            "from": probe.get("from"), "to": probe.get("to"),
+        }
+
+    if pins_coincide(pa, pb):
+        return {"success": False,
+                "error": "Both pins are at the same point (%.4f, %.4f); there is "
+                         "nothing to route." % (pa["x"], pa["y"]),
+                "from_point": pa, "to_point": pb}
+
+    if axis_aligned(pa, pb):
+        return {
+            "success": False,
+            "error": (
+                "These pins already share an axis, so a corner would draw a "
+                "redundant elbow where a single segment does the job. Use "
+                "live_connect_pins instead."
+            ),
+            "from_point": pa, "to_point": pb,
+        }
+
+    elbow = ({"x": pb["x"], "y": pa["y"]} if corner == "x"
+             else {"x": pa["x"], "y": pb["y"]})
+
+    body = _guard_prelude(allow_real_project) + '''
+            object page = FindPage(project, PAGENAME);
+            Type dclType = FindType("Eplan.EplApi.DataModel.DynamicConnectionLine");
+            MethodInfo create = RequireMethod(dclType, "Create", new string[] { "Page" }, false);
+            MethodInfo setG = RequireMethod(dclType, "SetGraphics",
+                new string[] { "PointD", "PointD" }, false);
+            Type ptType = setG.GetParameters()[0].ParameterType;
+            results["boundSignature"] = setG.ToString();
+
+            // Two segments through the elbow. Each is anchored at its own start
+            // and drawn RELATIVE to that anchor - the same rule as the straight
+            // case, where passing absolute coordinates put one end at the page
+            // origin.
+            double[][] segs = new double[][] {
+                new double[] { AX, AY, CX, CY },
+                new double[] { CX, CY, BX, BY }
+            };
+
+            List<object> drawn = new List<object>();
+            foreach (double[] s in segs)
+            {
+                object dcl = Activator.CreateInstance(dclType);
+                Call(create, dcl, new object[] { page });
+
+                PropertyInfo locProp = GetWritable(dclType, "Location");
+                if (locProp == null)
+                    throw new Exception("DynamicConnectionLine has no writable " +
+                        "Location, so a segment cannot be anchored and would be " +
+                        "drawn from the page origin. " + MemberList(dclType, false));
+                locProp.SetValue(dcl, MakePoint(ptType, s[0], s[1]), null);
+                Call(setG, dcl, new object[] {
+                    MakePoint(ptType, 0.0, 0.0),
+                    MakePoint(ptType, s[2] - s[0], s[3] - s[1]) });
+
+                Dictionary<string, object> d = new Dictionary<string, object>();
+                d["handle"] = Handle(dcl);
+                d["from"] = PtDict(MakePoint(ptType, s[0], s[1]));
+                d["to"] = PtDict(MakePoint(ptType, s[2], s[3]));
+                drawn.Add(d);
+            }
+
+            results["page"] = PropText(page, "Name");
+            results["segments"] = drawn;
+            results["segmentCount"] = drawn.Count;
+            results["page_after"] = ReadPage(page, 200, true, null);
+'''
+    body = _fill(
+        body,
+        PAGENAME='"%s"' % page_cs,
+        AX=cs_double(pa["x"], "from x"),
+        AY=cs_double(pa["y"], "from y"),
+        BX=cs_double(pb["x"], "to x"),
+        BY=cs_double(pb["y"], "to y"),
+        CX=cs_double(elbow["x"], "corner x"),
+        CY=cs_double(elbow["y"], "corner y"),
+    )
+
+    out = _shape(_execute_script(
+        _script(_cls("Routed"), body, extra_helpers=_HELPERS_SCHEMATIC),
+        timeout=timeout_seconds,
+    ))
+    if out.get("success"):
+        _annotate_pins(out)
+        out["from_point"] = pa
+        out["to_point"] = pb
+        out["corner"] = elbow
+        out["cornerMode"] = corner
+        handles = [s.get("handle") for s in (out.get("segments") or [])
+                   if s.get("handle")]
+        if handles:
+            # BOTH handles: removing one would leave half a wire, which is
+            # worse than leaving the whole thing.
+            out["undo"] = {"tool": "eplan_live_remove_placement",
+                           "page": out.get("page"), "handles": handles,
+                           "note": "Remove BOTH segments; one alone leaves half "
+                                   "a wire on the page."}
+        out["scopeNote"] = (
+            "Two graphical segments were drawn through the corner. Whether "
+            "EPLAN has created a LOGICAL connection is a separate question - "
+            "run eplan_generate_connections then live_read_connections."
+        )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 11. Discover the connection symbols (corners, T-nodes, breaks)
+# ---------------------------------------------------------------------------
+
+# Symbol.Type values that are CONNECTION symbols rather than devices. From the
+# 54-value Symbol.Type enum; these are the ones that participate in wiring.
+ROUTING_SYMBOL_TYPES = (
+    "Routing",             # a corner
+    "DynamicRouting",      # free/diagonal routing
+    "RoutingCross",        # four-way cross
+    "RoutingBridge",       # hop over
+    "TNodeUp", "TNodeDown", "TNodeLeft", "TNodeRight",
+    "InterruptionPoint",   # cross-page jump
+    "ConnectionDefinition",  # carries wire number / colour / cross-section
+    "PotentialDefinition", "PotentialTerminal",
+    "Shielding", "CableDefinitionLine", "NetDefinition",
+)
+
+_HELPERS_ROUTING = r'''
+    // The connection points of one symbol variant: which way each faces AND
+    // where it sits relative to the placement location.
+    //
+    // Both halves are load-bearing, and ORDER is preserved rather than sorted.
+    // Measured on SPECIAL_en_US: TLRO and TLRO_1 are both TNodeUp and face the
+    // same three directions, differing only in the order of their pins; while
+    // the five variants of TLRU face the same three directions but put the pins
+    // in DIFFERENT PLACES - v8 has all three at the vertex, v0 pushes its Right
+    // pin one grid step out. Sorting, or reporting directions alone, would make
+    // any of those look interchangeable.
+    static List<object> VariantPins(object variant)
+    {
+        List<object> pins = new List<object>();
+        object cps = TryRead(variant, "ConnectionPoints", null);
+        if (!(cps is IEnumerable)) return pins;
+        foreach (object p in (IEnumerable)cps)
+        {
+            if (p == null) continue;
+            Dictionary<string, object> pd = new Dictionary<string, object>();
+            object d = TryRead(p, "Direction", null);
+            pd["direction"] = d == null ? "Undefined" : SafeText(d);
+            object loc = TryRead(p, "Location", null);
+            if (loc != null) pd["offset"] = PtDict(loc);
+            pins.Add(pd);
+        }
+        return pins;
+    }
+
+    static Dictionary<string, object> DumpSymbol(object sym, string libName, Type symT, Type varT)
+    {
+        Dictionary<string, object> d = new Dictionary<string, object>();
+        d["library"] = libName;
+        d["symbol"] = PropText(sym, "Name");
+        d["type"] = PropText(sym, "Type");
+        List<object> vs = new List<object>();
+        object variants = TryRead(sym, "Variants", null);
+        if (variants is IEnumerable)
+        {
+            foreach (object v in (IEnumerable)variants)
+            {
+                if (v == null) continue;
+                List<object> pins = VariantPins(v);
+                if (pins.Count == 0) continue;
+                List<object> dirs = new List<object>();
+                foreach (object one in pins)
+                    dirs.Add(((Dictionary<string, object>)one)["direction"]);
+                Dictionary<string, object> vd = new Dictionary<string, object>();
+                object vn = TryRead(v, "VariantNr", null);
+                vd["variantNr"] = vn == null ? -1 : Convert.ToInt32(vn);
+                vd["directions"] = dirs;
+                vd["pins"] = pins;
+                vs.Add(vd);
+            }
+        }
+        d["variants"] = vs;
+        return d;
+    }
+'''
+
+
+def live_routing_catalog(symbol_type: str = None, directions: list = None,
+                         library: str = None,
+                         timeout_seconds: float = 180.0) -> dict:
+    """
+    Discover the CONNECTION symbols this project can use - corners, T-nodes,
+    crosses, interruption points - and which directions each variant faces.
+
+    You need this before placing any of them, and it must be DISCOVERED rather
+    than assumed: a project carries several symbols for the same job. Measured
+    on one production installation, `SPECIAL_en_US` alone holds 16, including
+    TWO different `TNodeUp` symbols (`TLRO` and `TLRO_1`) that differ only in
+    pin ORDER, and six interruption-point symbols - some two-pin, some one-pin
+    and directional.
+
+    So "the corner symbol" is not a constant. Ask what this project has.
+
+    A connection symbol is identified by `Symbol.Type`, not by its name. The
+    types that matter:
+
+        Routing            a corner
+        TNodeUp/Down/Left/Right    a branch - a SEPARATE TYPE per direction,
+                           not a variant, unlike corners
+        RoutingCross       four-way crossing
+        RoutingBridge      hop over without connecting
+        DynamicRouting     free/diagonal routing
+        InterruptionPoint  cross-page jump
+        ConnectionDefinition  carries wire number, colour, cross-section
+        PotentialDefinition, PotentialTerminal, Shielding,
+        CableDefinitionLine, NetDefinition
+
+    Reads only.
+
+    Args:
+        symbol_type: Filter to one Symbol.Type, e.g. "Routing" for corners or
+            "TNodeUp" for upward branches. Omit for all connection symbols.
+        directions: Filter to variants whose pins face exactly this SET of
+            directions, e.g. ["Right", "Down"] for a corner turning east and
+            south. Order is ignored for matching but REPORTED in the result,
+            because two symbols of the same type can differ only in pin order.
+        library: Restrict to one symbol library. Omit to search all the
+            project's libraries - which is usually right, since on the measured
+            installation every routing symbol lived in ONE library and the
+            device libraries had none.
+        timeout_seconds: Default 180s; this walks every library.
+
+    Returns:
+        {"success", "libraries" (all searched), "symbols": [...], "matched",
+         "byType"}
+
+        Each symbol: {"library", "symbol", "type", "variants": [{"variantNr",
+        "directions": ["Right","Down"]}]}.
+
+        When `directions` is given, each symbol also carries "matchingVariants"
+        - the variant numbers whose direction SET matches. If more than one
+        symbol matches, they are ALL returned rather than one being chosen:
+        which is correct is a house convention, not something this can decide.
+    """
+    try:
+        stype = cs_text(symbol_type, "symbol_type") if symbol_type else None
+        lib_cs = cs_escape(cs_text(library, "library")) if library else None
+        want = None
+        if directions:
+            if isinstance(directions, str):
+                directions = [directions]
+            valid = {"Up", "Down", "Left", "Right", "Undefined"}
+            want = []
+            for d in directions:
+                d = cs_text(d, "directions entry").strip().title()
+                if d not in valid:
+                    return {"success": False,
+                            "error": "Unknown direction %r. PinBase.Directions is "
+                                     "Up, Down, Left, Right (or Undefined)." % d}
+                want.append(d)
+    except SchematicValueError as exc:
+        return _err(exc)
+
+    if stype and stype not in ROUTING_SYMBOL_TYPES:
+        return {
+            "success": False,
+            "error": "symbol_type %r is not a connection-symbol type. Known: %s"
+                     % (stype, ", ".join(ROUTING_SYMBOL_TYPES)),
+        }
+
+    types_cs = ", ".join('"%s"' % t for t in ([stype] if stype else ROUTING_SYMBOL_TYPES))
+    lib_filter = ""
+    if lib_cs:
+        lib_filter = '                if (ln != LIBNAME) continue;\n'
+
+    body = '''            Type symT = FindType("Eplan.EplApi.DataModel.MasterData.Symbol");
+            Type varT = FindType("Eplan.EplApi.DataModel.MasterData.SymbolVariant");
+            Type libT = FindType("Eplan.EplApi.DataModel.MasterData.SymbolLibrary");
+            ConstructorInfo libCtor = libT.GetConstructor(new Type[] { project.GetType(), typeof(string) });
+            if (libCtor == null)
+                throw new Exception("SymbolLibrary has no (Project, string) ctor. " +
+                    MemberList(libT, true));
+            ConstructorInfo symByIdx = symT.GetConstructor(new Type[] { libT, typeof(int) });
+            if (symByIdx == null)
+                throw new Exception("Symbol has no (SymbolLibrary, int) ctor. " +
+                    MemberList(symT, true));
+
+            List<string> wantTypes = new List<string>(new string[] { TYPES });
+
+            PropertyInfo slProp = RequireReadable(project.GetType(), "SymbolLibraries");
+            object sl = slProp.GetValue(project, null);
+            List<string> libNames = new List<string>();
+            if (sl is IEnumerable)
+                foreach (object one in (IEnumerable)sl)
+                {
+                    if (one == null) continue;
+                    string n = PropText(one, "Name");
+                    if (n != null) libNames.Add(n);
+                }
+            results["libraries"] = libNames;
+
+            List<object> found = new List<object>();
+            foreach (string ln in libNames)
+            {
+''' + lib_filter + '''                object lib = null;
+                try { lib = libCtor.Invoke(new object[] { project, ln }); }
+                catch { continue; }   // a library the project lists but cannot open
+                for (int i = 0; i < 5000; i++)
+                {
+                    object s = null;
+                    try { s = symByIdx.Invoke(new object[] { lib, i }); }
+                    catch { break; }  // walked off the end
+                    if (s == null) break;
+                    if (PropText(s, "IsValid") != "True") continue;
+                    string tn = PropText(s, "Type");
+                    if (tn == null || !wantTypes.Contains(tn)) continue;
+                    found.Add(DumpSymbol(s, ln, symT, varT));
+                }
+            }
+            results["symbols"] = found;
+'''
+    body = _fill(body, TYPES=types_cs, **({"LIBNAME": '"%s"' % lib_cs} if lib_cs else {}))
+
+    out = _shape(_execute_script(
+        _script(_cls("RoutCat"), body,
+                extra_helpers=_HELPERS_SCHEMATIC + _HELPERS_ROUTING),
+        timeout=timeout_seconds,
+    ))
+    if not out.get("success"):
+        return out
+
+    syms = out.get("symbols") or []
+
+    # Direction matching happens HERE, not in C#, so it is testable offline.
+    if want:
+        target = sorted(want)
+        for s in syms:
+            s["matchingVariants"] = [
+                v["variantNr"] for v in (s.get("variants") or [])
+                if sorted(v.get("directions") or []) == target
+            ]
+        syms = [s for s in syms if s["matchingVariants"]]
+        out["symbols"] = syms
+        out["requestedDirections"] = want
+
+    out["matched"] = len(syms)
+    by_type = {}
+    for s in syms:
+        by_type.setdefault(s.get("type"), []).append(s.get("symbol"))
+    out["byType"] = by_type
+
+    if want and len(syms) > 1:
+        out["ambiguous"] = True
+        out["note"] = (
+            "%d symbols match those directions (%s). Which one is right is a "
+            "house convention, not something this can decide - pick from the "
+            "project's own usage, or ask. Note that two symbols of the same "
+            "type can differ only in pin ORDER, which is reported per variant."
+            % (len(syms), ", ".join("%s/%s" % (s["library"], s["symbol"])
+                                    for s in syms))
+        )
+    elif want and not syms:
+        out["note"] = (
+            "No symbol in this project has a variant facing exactly %s. Call "
+            "again without `directions` to see what the project does have."
+            % (want,)
+        )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 12. Place a connection symbol - corner, T-node, cross, interruption point
+# ---------------------------------------------------------------------------
+
+# Which absolute direction each Symbol.Type branches TOWARD. A T-node is not a
+# variant of one symbol the way a corner is: `TNodeUp` and `TNodeDown` are
+# separate types. That asymmetry is EPLAN's, not ours.
+TNODE_TYPE_BY_DIRECTION = {
+    "Up": "TNodeUp",
+    "Down": "TNodeDown",
+    "Left": "TNodeLeft",
+    "Right": "TNodeRight",
+}
+
+
+def live_place_connection_symbol(page: str, library: str, symbol: str,
+                                 x: float, y: float, variant_nr: int = 0,
+                                 snap_to_grid: bool = True,
+                                 allow_real_project: bool = False,
+                                 timeout_seconds: float = 90.0) -> dict:
+    """
+    Place a CONNECTION symbol - a corner, T-node, cross, interruption point.
+    WRITES - scratch-only by default.
+
+    This is a separate tool from `live_place_symbol` because EPLAN places the
+    two through different APIs. A routing symbol is not a `Function`, and
+    `Function.Create` refuses one with `S511085Cannot create function`, which
+    names no cause. The path that works is `SymbolVariant.Create(Page)`,
+    returning a `SymbolReference`. Measured on 2027 with `SPECIAL_en_US/CO`.
+
+    Prefer `live_place_corner` or `live_place_tnode`, which pick the symbol out
+    of the project instead of making you name one. Reach for this directly when
+    you already know exactly which symbol and variant you want, or for a type
+    those two do not cover (`RoutingCross`, `InterruptionPoint`, `Shielding`).
+
+    A caveat you should know about: `SymbolVariant.Create` takes no coordinate.
+    The object is born at the page ORIGIN and moved. This script moves it inside
+    the same locking step, before anything can observe it there, and connections
+    are only ever computed on demand by `generate_connections` - so the transit
+    is not visible to EPLAN's connection logic. It is still the reason this tool
+    reports `bornAtOrigin: true`: if a page ever does acquire a stray connection
+    near (0,0), that is where to look.
+
+    Args:
+        page: Page name, exactly as `live_create_page` or `live_read_page` reports it.
+        library: Symbol library name (see `live_routing_catalog`).
+        symbol: Symbol name within that library.
+        x, y: Where the symbol's connection vertex goes, in page millimetres.
+            For a corner both pins sit exactly here - a corner's two connection
+            points coincide at the turn, which is why one coordinate places it.
+        variant_nr: Variant index. For a corner this IS the rotation - measured
+            on `CO`: v0 Right+Down, v1 Right+Up, v2 Left+Up, v3 Left+Down.
+        snap_to_grid: Round to the page's own GridSize first (default True).
+            An off-grid connection symbol looks right and refuses to autoconnect.
+        allow_real_project: Must be True to write outside the scratch root.
+        timeout_seconds: Default 90s.
+
+    Returns:
+        {"success", "page", "handle", "placed", "requested"/"snapped",
+         "symbolType", "undo", "page_after"}
+
+    Refuses a device symbol, pointing at `live_place_symbol` - the mirror of the
+    check that tool makes.
+    """
+    try:
+        page_cs = cs_escape(cs_text(page, "page"))
+        lib_cs = cs_escape(cs_text(library, "library"))
+        sym_cs = cs_escape(cs_text(symbol, "symbol"))
+        x_cs = cs_double(x, "x")
+        y_cs = cs_double(y, "y")
+        variant_nr = cs_int(variant_nr, "variant_nr", minimum=0)
+    except SchematicValueError as exc:
+        return _err(exc)
+
+    body = _guard_prelude(allow_real_project) + '''
+            object page = FindPage(project, PAGENAME);
+            double grid = 0.0;
+            object gridVal = TryRead(page, "GridSize", null);
+            if (gridVal != null) grid = Convert.ToDouble(gridVal);
+
+            double ax = XVAL, ay = YVAL;
+            Dictionary<string, object> requested = new Dictionary<string, object>();
+            requested["x"] = ax; requested["y"] = ay;
+            results["requested"] = requested;
+            if (SNAP && grid > 0.0001) { ax = Snap(ax, grid); ay = Snap(ay, grid); }
+            Dictionary<string, object> used = new Dictionary<string, object>();
+            used["x"] = ax; used["y"] = ay;
+            results["snapped"] = used;
+            results["gridSize"] = grid;
+
+            Type libType = FindType("Eplan.EplApi.DataModel.MasterData.SymbolLibrary");
+            Type symType = FindType("Eplan.EplApi.DataModel.MasterData.Symbol");
+            Type varType = FindType("Eplan.EplApi.DataModel.MasterData.SymbolVariant");
+            Type ptType = FindType("Eplan.EplApi.Base.PointD");
+
+            ConstructorInfo libCtor = libType.GetConstructor(new Type[] { project.GetType(), typeof(string) });
+            if (libCtor == null)
+                throw new Exception("SymbolLibrary has no (Project, string) ctor. " + MemberList(libType, true));
+            object lib = null;
+            try { lib = libCtor.Invoke(new object[] { project, LIBNAME }); }
+            catch (TargetInvocationException tie)
+            { throw new Exception("Cannot open symbol library " + LIBNAME + ": " + Flatten(tie.InnerException)); }
+
+            ConstructorInfo symCtor = symType.GetConstructor(new Type[] { libType, typeof(string) });
+            object sym = null;
+            try { sym = symCtor.Invoke(new object[] { lib, SYMNAME }); }
+            catch (TargetInvocationException tie)
+            { throw new Exception("Cannot open symbol " + SYMNAME + " in " + LIBNAME + ": " +
+                Flatten(tie.InnerException) + ". Use live_routing_catalog to list real names."); }
+            if (sym == null || PropText(sym, "IsValid") != "True")
+                throw new Exception("Symbol " + SYMNAME + " does not resolve in " + LIBNAME + ".");
+
+            // The mirror of live_place_symbol's guard: a device placed through
+            // SymbolVariant.Create would come back as a bare SymbolReference
+            // with no device tag, no article, and no place in the parts list -
+            // a silently degraded object rather than an error.
+            string symKind = PropText(sym, "Type");
+            results["symbolType"] = symKind;
+            if (symKind == null || Array.IndexOf(ROUTING_TYPES, symKind) < 0)
+                throw new Exception("Symbol " + SYMNAME + " is of type " +
+                    (symKind == null ? "(unknown)" : symKind) + " - a device, not a " +
+                    "connection symbol. Use live_place_symbol, which creates a real " +
+                    "Function that can carry a device tag and an article.");
+
+            ConstructorInfo varCtor = varType.GetConstructor(new Type[] { symType, typeof(int) });
+            object variant = null;
+            try { variant = varCtor.Invoke(new object[] { sym, VARNR }); }
+            catch (TargetInvocationException tie)
+            { throw new Exception("Symbol " + SYMNAME + " has no variant " + VARNR + ": " +
+                Flatten(tie.InnerException) + ". live_routing_catalog reports the real ones."); }
+
+            // Create(Page) takes no coordinate: the object is born at (0,0).
+            MethodInfo mk = MethodByShape(varType, "Create", new string[] { "Page" }, false);
+            if (mk == null)
+                throw new Exception("SymbolVariant has no Create(Page). " + MemberList(varType, false));
+            object sref = Call(mk, variant, new object[] { page });
+            if (sref == null)
+                throw new Exception("SymbolVariant.Create(" + PAGENAME + ") returned null for " + SYMNAME + ".");
+            results["bornAtOrigin"] = true;
+
+            // ...so move it before returning. Leaving it at the origin is not an
+            // option: an unmoved connection symbol sits on top of the page frame
+            // and will autoconnect to whatever else is there.
+            PropertyInfo locProp = GetWritable(sref.GetType(), "Location");
+            if (locProp == null)
+                throw new Exception(sref.GetType().Name + " has no writable Location, so a " +
+                    "symbol created by SymbolVariant.Create cannot be moved off the page " +
+                    "origin. Refusing to leave it there. " + MemberList(sref.GetType(), false));
+            locProp.SetValue(sref, MakePoint(ptType, ax, ay), null);
+
+            object check = TryRead(sref, "Location", null);
+            if (check == null) throw new Exception("Location unreadable after the move.");
+            Dictionary<string, object> got = PtDict(check);
+            double gx = Convert.ToDouble(got["x"]), gy = Convert.ToDouble(got["y"]);
+            if (Math.Abs(gx - ax) > 0.001 || Math.Abs(gy - ay) > 0.001)
+                throw new Exception("The symbol did not move: asked for (" + ax + ", " + ay +
+                    "), it is at (" + gx + ", " + gy + "). It is still near the page origin.");
+
+            results["page"] = PropText(page, "Name");
+            results["handle"] = Handle(sref);
+            results["placed"] = DumpPlacement(sref, true);
+            results["page_after"] = ReadPage(page, 200, true, null);
+'''
+    body = _fill(
+        body,
+        PAGENAME='"%s"' % page_cs,
+        LIBNAME='"%s"' % lib_cs,
+        SYMNAME='"%s"' % sym_cs,
+        XVAL=x_cs,
+        YVAL=y_cs,
+        VARNR=str(variant_nr),
+        SNAP=cs_bool(snap_to_grid),
+    )
+
+    out = _shape(_execute_script(
+        _script(_cls("PlaceConn"), body, extra_helpers=_HELPERS_SCHEMATIC),
+        timeout=timeout_seconds,
+    ))
+    if out.get("success"):
+        _annotate_pins(out)
+        if out.get("placed"):
+            out["placed"]["pins"] = absolute_pins(out["placed"])
+        if out.get("handle"):
+            out["undo"] = {"tool": "eplan_live_remove_placement",
+                           "page": out.get("page"), "handle": out["handle"]}
+    return out
+
+
+def _pick(catalog, directions, symbol, kind, variant_nr=None):
+    """
+    Choose one symbol+variant out of a catalog read, or explain why not.
+
+    Never picks between equally-matching symbols. Two symbols of the same type
+    can differ only in pin order (`TLRO` vs `TLRO_1`), and which one a drawing
+    should use is a house convention this cannot derive. Refusing and listing
+    the candidates is the honest answer; picking the first would be a coin flip
+    presented as a decision.
+    """
+    if not catalog.get("success"):
+        return None, catalog
+
+    syms = catalog.get("symbols") or []
+    rivals = len(syms)
+    if symbol:
+        syms = [s for s in syms if s.get("symbol") == symbol]
+        if not syms:
+            return None, {
+                "success": False,
+                "error": "No symbol named %r in this project faces %s. "
+                         "Call live_routing_catalog to see what does."
+                         % (symbol, directions),
+            }
+
+    if not syms:
+        return None, {
+            "success": False,
+            "error": "This project has no %s facing %s. live_routing_catalog "
+                     "lists what it does have." % (kind, directions),
+            "requestedDirections": directions,
+        }
+
+    if len(syms) > 1:
+        return None, {
+            "success": False,
+            "error": "%d symbols face %s: %s. Which one this drawing should use "
+                     "is a house convention, not something this can derive - "
+                     "note that two symbols of the same type can differ only in "
+                     "pin ORDER. Pass symbol=... to choose."
+                     % (len(syms), directions,
+                        ", ".join("%s/%s" % (s["library"], s["symbol"]) for s in syms)),
+            "candidates": syms,
+            "ambiguous": True,
+        }
+
+    s = syms[0]
+    chosen_from = ("named by the caller out of %d symbols facing %s"
+                   % (rivals, directions)) if (symbol and rivals > 1) else None
+    variants = s.get("matchingVariants") or []
+    if not variants:
+        return None, {
+            "success": False,
+            "error": "%s/%s is the right symbol but no variant of it faces %s."
+                     % (s["library"], s["symbol"], directions),
+        }
+    if variant_nr is not None:
+        if variant_nr not in variants:
+            return None, {
+                "success": False,
+                "error": "%s/%s variant %s does not face %s. The variants that "
+                         "do: %s." % (s["library"], s["symbol"], variant_nr,
+                                      directions,
+                                      ", ".join(str(v) for v in variants)),
+                "candidates": [s],
+            }
+        why = ("variant %s named by the caller out of %d that face %s"
+               % (variant_nr, len(variants), directions))
+        if chosen_from:
+            why = "%s/%s %s; %s" % (s["library"], s["symbol"], chosen_from, why)
+        return (s, variant_nr, why), None
+
+    if len(variants) > 1:
+        by_nr = {v["variantNr"]: v for v in (s.get("variants") or [])}
+        detail = []
+        for nr in variants:
+            v = by_nr.get(nr) or {}
+            detail.append("v%s: %s" % (nr, ", ".join(
+                "%s at (%+.2f, %+.2f)" % (pin.get("direction"),
+                                          (pin.get("offset") or {}).get("x", 0.0),
+                                          (pin.get("offset") or {}).get("y", 0.0))
+                for pin in (v.get("pins") or []))))
+        return None, {
+            "success": False,
+            "error": "%s/%s has %d variants facing %s. They are NOT "
+                     "interchangeable - the pins sit in different places. "
+                     "Pass variant_nr to choose:\n  %s"
+                     % (s["library"], s["symbol"], len(variants), directions,
+                        "\n  ".join(detail)),
+            "candidates": [s],
+            "variantOffsets": detail,
+            "ambiguous": True,
+        }
+    if chosen_from:
+        return (s, variants[0], "%s/%s %s" % (s["library"], s["symbol"],
+                                              chosen_from)), None
+    return (s, variants[0], "the only %s in this project with a variant facing "
+                            "%s" % (kind, directions)), None
+
+
+def live_place_corner(page: str, x: float, y: float, directions: list,
+                      symbol: str = None, variant_nr: int = None,
+                      snap_to_grid: bool = True,
+                      allow_real_project: bool = False,
+                      timeout_seconds: float = 180.0) -> dict:
+    """
+    Place a corner where a wire turns. WRITES - scratch-only by default.
+
+    A straight run between two facing pins needs NO object: EPLAN draws an
+    autoconnecting line between them. A turn does need one, and this places it.
+
+    The symbol is looked up in the project rather than assumed. There is no
+    universal corner symbol - `live_routing_catalog` exists because a project
+    can carry several, and a name that is right in one installation is wrong in
+    the next.
+
+    Args:
+        page: Page name.
+        x, y: The turn itself, in page millimetres. A corner's two connection
+            points coincide exactly here - measured on `CO`, both pins report
+            an offset of (0, 0) from the placement location - so one coordinate
+            fully places it.
+        directions: The two directions the corner faces, e.g. ["Right", "Down"]
+            for a wire arriving from the east and leaving to the south. Order is
+            irrelevant. Directions are absolute page directions: +y is Up,
+            measured on a placed symbol whose Up pin sits at offset (0, +6.3).
+        symbol: Name a symbol explicitly. Needed only when the project offers
+            more than one for these directions, in which case this refuses and
+            lists them rather than choosing.
+        variant_nr: Force a variant. Normally derived from `directions`.
+        snap_to_grid: Default True.
+        allow_real_project: Must be True to write outside the scratch root.
+        timeout_seconds: Default 180s - this reads the symbol libraries first.
+
+    Returns:
+        The `live_place_connection_symbol` result, plus "chosen" recording which
+        symbol and variant were selected and why.
+
+        On ambiguity: {"success": False, "ambiguous": True, "candidates": [...]}
+        with no write attempted.
+    """
+    if isinstance(directions, str):
+        directions = [directions]
+    directions = list(directions or [])
+    if len(directions) != 2:
+        return {"success": False,
+                "error": "A corner faces exactly two directions, got %d (%s). For a "
+                         "three-way branch use live_place_tnode."
+                         % (len(directions), directions)}
+    if len(set(d.strip().title() for d in directions)) != 2:
+        return {"success": False,
+                "error": "A corner's two directions must differ, got %s. Two pins "
+                         "facing the same way is a straight run, which needs no "
+                         "symbol at all - EPLAN autoconnects it." % (directions,)}
+
+    cat = live_routing_catalog(symbol_type="Routing", directions=directions,
+                               timeout_seconds=timeout_seconds)
+    picked, problem = _pick(cat, directions, symbol, "corner (Symbol.Type Routing)",
+                            variant_nr=variant_nr)
+    if problem:
+        return problem
+    sym, vnr, why = picked
+
+    out = live_place_connection_symbol(
+        page, sym["library"], sym["symbol"], x, y, variant_nr=vnr,
+        snap_to_grid=snap_to_grid, allow_real_project=allow_real_project,
+        timeout_seconds=timeout_seconds)
+    if out.get("success"):
+        out["chosen"] = {"library": sym["library"], "symbol": sym["symbol"],
+                         "variantNr": vnr, "type": sym.get("type"),
+                         "directions": directions,
+                         "why": why}
+    return out
+
+
+def live_place_tnode(page: str, x: float, y: float, branch_direction: str,
+                     symbol: str = None, variant_nr: int = None,
+                     snap_to_grid: bool = True,
+                     allow_real_project: bool = False,
+                     timeout_seconds: float = 180.0) -> dict:
+    """
+    Place a T-node where a wire branches three ways. WRITES - scratch-only by
+    default.
+
+    Note the asymmetry with corners, which is EPLAN's and not ours: a corner is
+    ONE symbol whose four rotations are variants, but a T-node is a separate
+    `Symbol.Type` per direction - `TNodeUp` is a different type from
+    `TNodeDown`. So a corner is chosen by variant and a T-node by type. That is
+    why this takes a single `branch_direction` rather than a direction list.
+
+    Args:
+        page: Page name.
+        x, y: The junction, in page millimetres.
+        branch_direction: Which way the third leg points - "Up", "Down", "Left"
+            or "Right". The other two legs run along the perpendicular axis, so
+            "Up" means a horizontal run with a branch rising out of it.
+        symbol: Name a symbol explicitly. A real project can hold two T-nodes of
+            the SAME type differing only in pin order - measured, `TLRO` and
+            `TLRO_1` are both `TNodeUp`. When that happens this refuses and
+            lists them rather than flipping a coin.
+        variant_nr: Force a variant.
+        snap_to_grid: Default True.
+        allow_real_project: Must be True to write outside the scratch root.
+        timeout_seconds: Default 180s.
+
+    Returns:
+        The `live_place_connection_symbol` result plus "chosen", or an
+        ambiguity refusal carrying "candidates".
+    """
+    try:
+        d = cs_text(branch_direction, "branch_direction").strip().title()
+    except SchematicValueError as exc:
+        return _err(exc)
+    if d not in TNODE_TYPE_BY_DIRECTION:
+        return {"success": False,
+                "error": "branch_direction must be one of %s, got %r."
+                         % (", ".join(sorted(TNODE_TYPE_BY_DIRECTION)), branch_direction)}
+
+    stype = TNODE_TYPE_BY_DIRECTION[d]
+    # The three legs: the branch, plus the two along the perpendicular axis.
+    legs = ([d, "Left", "Right"] if d in ("Up", "Down") else [d, "Up", "Down"])
+
+    cat = live_routing_catalog(symbol_type=stype, directions=legs,
+                               timeout_seconds=timeout_seconds)
+    picked, problem = _pick(cat, legs, symbol, "T-node of type %s" % stype,
+                            variant_nr=variant_nr)
+    if problem:
+        problem["branchDirection"] = d
+        problem["symbolType"] = stype
+        return problem
+    sym, vnr, why = picked
+
+    out = live_place_connection_symbol(
+        page, sym["library"], sym["symbol"], x, y, variant_nr=vnr,
+        snap_to_grid=snap_to_grid, allow_real_project=allow_real_project,
+        timeout_seconds=timeout_seconds)
+    if out.get("success"):
+        out["chosen"] = {"library": sym["library"], "symbol": sym["symbol"],
+                         "variantNr": vnr, "type": stype,
+                         "branchDirection": d, "directions": legs,
+                         "why": why}
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 13. Place a device already lined up with something on the page
+# ---------------------------------------------------------------------------
+
+OPPOSITE_DIRECTION = {"Up": "Down", "Down": "Up", "Left": "Right", "Right": "Left"}
+
+_HELPERS_ONESYM = r'''
+    // The connection points of ONE named symbol variant, straight out of the
+    // library. live_routing_catalog reads the same thing, but only walks
+    // CONNECTION symbols; this has to answer for a device.
+    static Dictionary<string, object> ReadVariantPins(object project, string libName,
+                                                      string symName, int variantNr)
+    {
+        Type libType = FindType("Eplan.EplApi.DataModel.MasterData.SymbolLibrary");
+        Type symType = FindType("Eplan.EplApi.DataModel.MasterData.Symbol");
+        Type varType = FindType("Eplan.EplApi.DataModel.MasterData.SymbolVariant");
+
+        object lib = libType.GetConstructor(new Type[] { project.GetType(), typeof(string) })
+            .Invoke(new object[] { project, libName });
+        object sym = null;
+        try
+        {
+            sym = symType.GetConstructor(new Type[] { libType, typeof(string) })
+                .Invoke(new object[] { lib, symName });
+        }
+        catch (TargetInvocationException tie)
+        { throw new Exception("Cannot open symbol " + symName + " in " + libName + ": " +
+            Flatten(tie.InnerException)); }
+        if (sym == null || PropText(sym, "IsValid") != "True")
+            throw new Exception("Symbol " + symName + " does not resolve in " + libName + ".");
+
+        object variant = null;
+        try
+        {
+            variant = varType.GetConstructor(new Type[] { symType, typeof(int) })
+                .Invoke(new object[] { sym, variantNr });
+        }
+        catch (TargetInvocationException tie)
+        { throw new Exception("Symbol " + symName + " has no variant " + variantNr + ": " +
+            Flatten(tie.InnerException)); }
+
+        Dictionary<string, object> d = new Dictionary<string, object>();
+        d["library"] = libName;
+        d["symbol"] = symName;
+        d["variantNr"] = variantNr;
+        d["type"] = PropText(sym, "Type");
+        d["pins"] = VariantPins(variant);
+        return d;
+    }
+'''
+
+
+def live_place_connected(page: str, to_handle: str, to_pin: int,
+                         library: str, symbol: str, distance: float,
+                         variant_nr: int = 0, new_pin: int = None,
+                         allow_real_project: bool = False,
+                         timeout_seconds: float = 120.0) -> dict:
+    """
+    Place a device already lined up to autoconnect with a pin on the page.
+    WRITES - scratch-only by default.
+
+    This is the tool that removes coordinate arithmetic from schematic
+    authoring. You say "put a contact 40mm below -K1's pin 2"; it works out
+    where the symbol has to sit so its own pin faces that one across a shared
+    axis, which is the condition EPLAN needs to draw an autoconnecting line.
+
+    No line is drawn, and none should be. Two facing pins on a shared axis ARE
+    the connection - `generate_connections` then materialises a logical
+    Connection between them. Verified live: -K1 -> corner -> -K2 laid out this
+    way produced one connection, `+-K1[2] -> +-K2[1]`.
+
+    How the new symbol is oriented is NOT decided here. `variant_nr` is the
+    rotation - measured on `NFPA_symbol_en_US/SL`, v0 faces Up/Down and v1 faces
+    Left/Right - and the variant you pass must actually have a pin facing back
+    toward the anchor, or this refuses. Picking a rotation for you would be
+    guessing at the drawing's intent.
+
+    Args:
+        page: Page the anchor is on. The new symbol goes on the same page.
+        to_handle: Handle of the placement to line up with, from
+            `live_place_symbol` or `live_read_page`. Session-scoped.
+        to_pin: Which of its pins, by index, as `live_read_page` reports them.
+            That pin's `direction` sets the axis and which way the run goes.
+        library, symbol: The symbol to place.
+        distance: Millimetres between the two PINS, measured along the run.
+            Must be positive and a whole multiple of the page grid - an
+            off-grid pin looks correct and refuses to autoconnect. The
+            placement location is derived from this, not passed.
+        variant_nr: Rotation of the new symbol, default 0.
+        new_pin: Which pin of the new symbol faces the anchor. Needed only when
+            the chosen variant has more than one pin facing that way; with
+            exactly one, it is inferred.
+        allow_real_project: Must be True to write outside the scratch root.
+        timeout_seconds: Default 120s - this reads the symbol library first.
+
+    Returns:
+        The `live_place_symbol` result, plus "alignment": the anchor pin, the
+        new pin, the shared axis, and the location that was solved for.
+
+    Refuses rather than placing something that will not connect: a pin with no
+    direction, a variant with no pin facing back, an ambiguous choice of pin, or
+    a distance that is not a grid multiple.
+    """
+    try:
+        page_cs = cs_text(page, "page")
+        handle_cs = cs_text(to_handle, "to_handle")
+        lib_cs = cs_text(library, "library")
+        sym_cs = cs_text(symbol, "symbol")
+        to_pin = cs_int(to_pin, "to_pin", minimum=0)
+        variant_nr = cs_int(variant_nr, "variant_nr", minimum=0)
+        if new_pin is not None:
+            new_pin = cs_int(new_pin, "new_pin", minimum=0)
+        distance = cs_double(distance, "distance")
+    except SchematicValueError as exc:
+        return _err(exc)
+
+    try:
+        dist = float(distance)
+    except (TypeError, ValueError):
+        return {"success": False, "error": "distance must be a number."}
+    if dist <= 0:
+        return {"success": False,
+                "error": "distance must be positive - it is the gap between the two "
+                         "pins along the run. The DIRECTION comes from the anchor "
+                         "pin, not from the sign."}
+
+    # Read the anchor pin and the candidate symbol's pins in one round trip.
+    probe_body = '''            object page = FindPage(project, PAGENAME);
+            object anchor = ResolveOnPage(page, ANCHORH);
+            results["page"] = PropText(page, "Name");
+            object grid = TryRead(page, "GridSize", null);
+            results["gridSize"] = grid == null ? 0.0 : Convert.ToDouble(grid);
+            results["anchor"] = DumpPlacement(anchor, true);
+            results["candidate"] = ReadVariantPins(project, LIBNAME, SYMNAME, VARNR);
+'''
+    probe_body = _fill(
+        probe_body,
+        PAGENAME='"%s"' % cs_escape(page_cs),
+        ANCHORH='"%s"' % cs_escape(handle_cs),
+        LIBNAME='"%s"' % cs_escape(lib_cs),
+        SYMNAME='"%s"' % cs_escape(sym_cs),
+        VARNR=str(variant_nr),
+    )
+    probe = _shape(_execute_script(
+        _script(_cls("AlignProbe"), probe_body,
+                extra_helpers=_HELPERS_SCHEMATIC + _HELPERS_ROUTING + _HELPERS_ONESYM),
+        timeout=timeout_seconds,
+    ))
+    if not probe.get("success"):
+        return probe
+
+    anchor = probe.get("anchor") or {}
+    anchor["pins"] = absolute_pins(anchor)
+    apins = anchor.get("pins") or []
+    match = [p for p in apins if p.get("index") == to_pin]
+    if not match:
+        return {"success": False,
+                "error": "Placement %s has no pin %d. Its pins: %s."
+                         % (to_handle, to_pin,
+                            ", ".join(str(p.get("index")) for p in apins) or "none")}
+    apin = match[0]
+
+    direction = apin.get("direction")
+    if direction not in OPPOSITE_DIRECTION:
+        return {"success": False,
+                "error": "Pin %d of %s reports direction %r, so there is no axis to "
+                         "line up along. A pin with no direction cannot autoconnect."
+                         % (to_pin, to_handle, direction)}
+    if apin.get("point") is None:
+        return {"success": False,
+                "error": "Pin %d of %s has no resolved position (frame %r), so where "
+                         "to put the new symbol cannot be computed. Treating it as "
+                         "(0,0) would place the device on the page origin."
+                         % (to_pin, to_handle, apin.get("frame"))}
+
+    grid = probe.get("gridSize") or 0.0
+    if grid > 0.0001:
+        steps = dist / grid
+        if abs(steps - round(steps)) > 1e-6:
+            return {"success": False,
+                    "error": "distance %g is not a multiple of the page grid %g "
+                             "(%.3f steps). An off-grid pin looks correct on screen "
+                             "and refuses to autoconnect. Nearest multiples: %g or %g."
+                             % (dist, grid, steps,
+                                math.floor(steps) * grid,
+                                math.ceil(steps) * grid)}
+
+    # The new symbol must have a pin facing BACK along the run.
+    want_back = OPPOSITE_DIRECTION[direction]
+    cand = probe.get("candidate") or {}
+    cpins = cand.get("pins") or []
+    facing = [i for i, p in enumerate(cpins) if p.get("direction") == want_back]
+    if not facing:
+        return {"success": False,
+                "error": "%s/%s variant %d has no pin facing %s, so nothing of it "
+                         "would face pin %d of %s (which faces %s). Its pins face: "
+                         "%s. variant_nr is the rotation - try another."
+                         % (library, symbol, variant_nr, want_back, to_pin,
+                            to_handle, direction,
+                            ", ".join(str(p.get("direction")) for p in cpins) or "nothing"),
+                "candidatePins": cpins}
+    if new_pin is not None:
+        if new_pin not in facing:
+            return {"success": False,
+                    "error": "Pin %d of %s/%s variant %d does not face %s. The pins "
+                             "that do: %s."
+                             % (new_pin, library, symbol, variant_nr, want_back,
+                                ", ".join(str(i) for i in facing))}
+        chosen_pin = new_pin
+    elif len(facing) > 1:
+        return {"success": False,
+                "error": "%s/%s variant %d has %d pins facing %s (indices %s). Which "
+                         "one should meet pin %d of %s is not something this can "
+                         "derive - pass new_pin."
+                         % (library, symbol, variant_nr, len(facing), want_back,
+                            ", ".join(str(i) for i in facing), to_pin, to_handle),
+                "candidatePins": cpins,
+                "ambiguous": True}
+    else:
+        chosen_pin = facing[0]
+
+    # Solve for the LOCATION. The pin offset is relative to it, so the location
+    # is the target pin position minus that offset.
+    ax, ay = apin["point"]["x"], apin["point"]["y"]
+    step = {"Up": (0.0, 1.0), "Down": (0.0, -1.0),
+            "Left": (-1.0, 0.0), "Right": (1.0, 0.0)}[direction]
+    tx, ty = ax + step[0] * dist, ay + step[1] * dist
+    off = cpins[chosen_pin].get("offset") or {}
+    loc_x, loc_y = tx - float(off.get("x", 0.0)), ty - float(off.get("y", 0.0))
+
+    out = live_place_symbol(page, library, symbol, loc_x, loc_y,
+                            variant_nr=variant_nr, snap_to_grid=False,
+                            allow_real_project=allow_real_project,
+                            timeout_seconds=timeout_seconds)
+    if out.get("success"):
+        out["alignment"] = {
+            "anchor": {"handle": to_handle, "pin": to_pin,
+                       "direction": direction, "point": {"x": ax, "y": ay}},
+            "placed": {"pin": chosen_pin, "direction": want_back,
+                       "point": {"x": tx, "y": ty}},
+            "axis": "y" if direction in ("Up", "Down") else "x",
+            "distance": dist,
+            "location": {"x": loc_x, "y": loc_y},
+            "note": "The two pins face each other on a shared axis, which is the "
+                    "whole connection - no line is drawn. Run generate_connections "
+                    "and read it back with live_read_connections.",
+        }
     return out
