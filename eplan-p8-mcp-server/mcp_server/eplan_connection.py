@@ -113,12 +113,22 @@ EPLAN_EXE_NAME = "EPLAN.exe"
 # message truncation came out of these entries; a field absent from them is
 # invisible to the next one. test_log_action_offline.py fails if a key is added
 # to the result contract without being added here.
+# How long to wait for a generated script's result file before declaring that
+# the action did not run. EPLAN's ExecuteScript is synchronous on this path, so
+# a slow action still writes its result before returning - meaning this expiring
+# points at the script never having run (usually a compile error), not at a slow
+# action. A module constant so tests can shorten it without patching the clock:
+# eplan_connection.time is the shared time module, and monkeypatching its
+# sleep/time affects pytest itself.
+SCRIPT_RESULT_TIMEOUT_S = 30.0
+
 LOGGED_RESULT_KEYS = (
     "executor",
     "error",
     "errorType",
     "eplanMessages",
     "message",
+    "failedScriptPath",
 )
 
 
@@ -689,6 +699,50 @@ public class QuietExecute_{exec_id}
 }}
 """
 
+    def _preserve_failed_script(self, script_path: str) -> Optional[str]:
+        """Copy a generated script aside before the cleanup deletes it.
+
+        When no result file appears the generated C# is the only evidence of
+        why, and the `finally` below removes it - which is what made commit
+        21d10d4d6 (a CS1061 that broke every wrapped action) expensive to
+        diagnose. Returns the preserved path, or None if it could not be kept;
+        never raises, because this runs on an error path.
+        """
+        try:
+            dest_dir = os.path.join(self._log_dir(), "failed_scripts")
+            os.makedirs(dest_dir, exist_ok=True)
+            dest = os.path.join(dest_dir, os.path.basename(script_path))
+            with open(script_path, "r", encoding="utf-8") as src:
+                content = src.read()
+            with open(dest, "w", encoding="utf-8") as out:
+                out.write(content)
+            return dest
+        except Exception:
+            return None
+
+    def _script_failure(self, action, script_path, started, error_type, error, message):
+        """Build, log and return a 'the action did not run' result.
+
+        The three no-result paths below all used to return a bare `message`,
+        which reads to a caller exactly like a slow action that eventually
+        worked. Each now carries errorType plus executor="none", so the model
+        can tell "EPLAN ran this and it failed" from "this never reached
+        EPLAN", and stop retrying in the second case.
+        """
+        result = {
+            "success": False,
+            "executor": "none",
+            "errorType": error_type,
+            "error": error,
+            "message": message,
+            "action": action,
+        }
+        preserved = self._preserve_failed_script(script_path)
+        if preserved:
+            result["failedScriptPath"] = preserved
+        self._log_action(action, result, started)
+        return result
+
     def _run_generated_script(self, action, script_path, result_path, started) -> dict:
         """Execute a generated [Start] script, await the result file, clean up."""
         try:
@@ -704,18 +758,39 @@ public class QuietExecute_{exec_id}
             # caller cannot even see. See scripted.py.
             exec_result = self.execute_action(f'ExecuteScript /ScriptFile:"{script_path}"', quiet_mode=False)
             if not exec_result.get("success"):
-                result = {"success": False, "message": f"Failed to execute action via script: {exec_result.get('message')}"}
-                self._log_action(action, result, started)
-                return result
+                return self._script_failure(
+                    action, script_path, started,
+                    "McpScriptExecuteFailed",
+                    "EPLAN refused to run the generated wrapper script, so the "
+                    "action did NOT execute. This is a fault in this MCP "
+                    "server's script plumbing, not in the action or its "
+                    "parameters - do not retry with different parameters. "
+                    "Underlying ExecuteScript result: %s"
+                    % exec_result.get("message"),
+                    "Failed to execute action via script: %s"
+                    % exec_result.get("message"),
+                )
 
             # Wait for result file
-            timeout = 30.0
+            timeout = SCRIPT_RESULT_TIMEOUT_S
             start_time = time.time()
             while not os.path.exists(result_path):
                 if time.time() - start_time > timeout:
-                    result = {"success": False, "message": "Timeout waiting for scripted action execution result"}
-                    self._log_action(action, result, started)
-                    return result
+                    return self._script_failure(
+                        action, script_path, started,
+                        "McpScriptNoResult",
+                        "The action did NOT run: the generated wrapper script "
+                        "produced no result file within %gs. This is NOT a "
+                        "timeout on a slow action - EPLAN's ExecuteScript is "
+                        "synchronous here, so a slow action would still have "
+                        "written its result before returning. The usual cause "
+                        "is that the generated C# failed to compile, which "
+                        "affects every wrapped action equally rather than just "
+                        "this one. The script has been preserved at "
+                        "failedScriptPath; check eplan_get_system_messages for "
+                        "a compiler error." % timeout,
+                        "Timeout waiting for scripted action execution result",
+                    )
                 time.sleep(0.1)
 
             # Read results, tolerating a partially-written file (the C# writer
@@ -730,9 +805,17 @@ public class QuietExecute_{exec_id}
                 except (json.JSONDecodeError, ValueError):
                     continue
             if res_data is None:
-                result = {"success": False, "message": "Could not parse action result file"}
-                self._log_action(action, result, started)
-                return result
+                return self._script_failure(
+                    action, script_path, started,
+                    "McpScriptBadResult",
+                    "The action may or may not have run: a result file appeared "
+                    "but never became valid JSON. Unlike McpScriptNoResult the "
+                    "script did reach its write, so treat any side effect of "
+                    "this action as possibly applied and verify before "
+                    "retrying. The script has been preserved at "
+                    "failedScriptPath.",
+                    "Could not parse action result file",
+                )
 
             self._log_action(action, res_data, started)
             return res_data
