@@ -5,7 +5,7 @@ constructions, terminals, accessory lists and accessory placements.
 """
 
 from typing import List, Dict, Optional
-from ._base import _get_connected_manager, _build_action
+from ._base import _get_connected_manager, _build_action, _quote_param
 
 
 def partsmanagement_export(
@@ -45,12 +45,12 @@ def partsmanagement_export(
     if error:
         return error
 
-    parts = ["partsmanagementapi", "/TYPE:EXPORT", f'/EXPORTFILE:"{export_file}"']
+    parts = ["partsmanagementapi", "/TYPE:EXPORT", _quote_param("EXPORTFILE", export_file)]
 
     if format:
         parts.append(f"/FORMAT:{format}")
     if filter_scheme:
-        parts.append(f'/FILTERSCHEME:"{filter_scheme}"')
+        parts.append(_quote_param("FILTERSCHEME", filter_scheme))
 
     # Add part numbers
     if part_numbers:
@@ -60,27 +60,27 @@ def partsmanagement_export(
     # Add manufacturers
     if manufacturers:
         for i, m in enumerate(manufacturers, 1):
-            parts.append(f'/MANUFACTURER{i}:"{m}"')
+            parts.append(_quote_param(f"MANUFACTURER{i}", m))
 
     # Add constructions
     if constructions:
         for i, c in enumerate(constructions, 1):
-            parts.append(f'/CONSTRUCTION{i}:"{c}"')
+            parts.append(_quote_param(f"CONSTRUCTION{i}", c))
 
     # Add connection patterns
     if connection_patterns:
         for i, cp in enumerate(connection_patterns, 1):
-            parts.append(f'/CONNECTIONPOINTPATTERN{i}:"{cp}"')
+            parts.append(_quote_param(f"CONNECTIONPOINTPATTERN{i}", cp))
 
     # Add accessory lists
     if accessory_lists:
         for i, al in enumerate(accessory_lists, 1):
-            parts.append(f'/ACCESSORYLIST{i}:"{al}"')
+            parts.append(_quote_param(f"ACCESSORYLIST{i}", al))
 
     # Add accessory placements
     if accessory_placements:
         for i, ap in enumerate(accessory_placements, 1):
-            parts.append(f'/ACCESSORYPLACEMENT{i}:"{ap}"')
+            parts.append(_quote_param(f"ACCESSORYPLACEMENT{i}", ap))
 
     return manager.execute_action(" ".join(parts))
 
@@ -118,7 +118,7 @@ def partsmanagement_import(
     if error:
         return error
 
-    parts = ["partsmanagementapi", "/TYPE:IMPORT", f'/IMPORTFILE:"{import_file}"']
+    parts = ["partsmanagementapi", "/TYPE:IMPORT", _quote_param("IMPORTFILE", import_file)]
 
     if format:
         parts.append(f"/FORMAT:{format}")
@@ -126,7 +126,7 @@ def partsmanagement_import(
     if additional_language:
         parts.append("/ADDITIONAL_LANGUAGE:1")
     if filter_scheme:
-        parts.append(f'/FILTERSCHEME:"{filter_scheme}"')
+        parts.append(_quote_param("FILTERSCHEME", filter_scheme))
 
     return manager.execute_action(" ".join(parts))
 
@@ -173,7 +173,7 @@ def partsmanagement_export_by_properties(
     if error:
         return error
 
-    parts = ["partsmanagementapi", f"/TYPE:{export_type}", f'/EXPORTFILE:"{export_file}"']
+    parts = ["partsmanagementapi", f"/TYPE:{export_type}", _quote_param("EXPORTFILE", export_file)]
 
     if format:
         parts.append(f"/FORMAT:{format}")

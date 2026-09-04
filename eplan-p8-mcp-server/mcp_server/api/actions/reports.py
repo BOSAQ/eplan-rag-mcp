@@ -4,7 +4,7 @@ Complete implementation with all documented parameters.
 """
 
 from typing import List, Optional
-from ._base import _get_connected_manager, _build_action
+from ._base import _get_connected_manager, _build_action, _quote_param
 
 
 def update_reports(
@@ -39,17 +39,17 @@ def update_reports(
     parts = ["reports", f"/TYPE:{report_type}"]
 
     if project_name:
-        parts.append(f'/PROJECTNAME:"{project_name}"')
+        parts.append(_quote_param("PROJECTNAME", project_name))
     if page_name:
-        parts.append(f'/PAGENAME:"{page_name}"')
+        parts.append(_quote_param("PAGENAME", page_name))
     if use_page_filter:
         parts.append("/USEPAGEFILTER:1")
     if page_filter_name:
-        parts.append(f'/PAGEFILTERNAME:"{page_filter_name}"')
+        parts.append(_quote_param("PAGEFILTERNAME", page_filter_name))
 
     if page_names:
         for i, page in enumerate(page_names, 1):
-            parts.append(f'/PAGENAME{i}:"{page}"')
+            parts.append(_quote_param(f"PAGENAME{i}", page))
 
     if page_identifiers:
         for i, sel in enumerate(page_identifiers, 1):
@@ -85,17 +85,17 @@ def update_model_view_pages(
     parts = ["reports", "/TYPE:UPDATEMODELVIEWPAGES"]
 
     if project_name:
-        parts.append(f'/PROJECTNAME:"{project_name}"')
+        parts.append(_quote_param("PROJECTNAME", project_name))
     if page_name:
-        parts.append(f'/PAGENAME:"{page_name}"')
+        parts.append(_quote_param("PAGENAME", page_name))
     if use_page_filter:
         parts.append("/USEPAGEFILTER:1")
     if page_filter_name:
-        parts.append(f'/PAGEFILTERNAME:"{page_filter_name}"')
+        parts.append(_quote_param("PAGEFILTERNAME", page_filter_name))
 
     if page_names:
         for i, page in enumerate(page_names, 1):
-            parts.append(f'/PAGENAME{i}:"{page}"')
+            parts.append(_quote_param(f"PAGENAME{i}", page))
 
     if page_identifiers:
         for i, sel in enumerate(page_identifiers, 1):
@@ -125,13 +125,13 @@ def create_model_views(
     parts = ["reports", "/TYPE:CREATEMODELVIEWS"]
 
     if project_name:
-        parts.append(f'/PROJECTNAME:"{project_name}"')
+        parts.append(_quote_param("PROJECTNAME", project_name))
     if replace_existing:
         parts.append("/REPLACEEXISTING:1")
 
     if templates:
         for i, t in enumerate(templates, 1):
-            parts.append(f'/TEMPLATE{i}:"{t}"')
+            parts.append(_quote_param(f"TEMPLATE{i}", t))
 
     return manager.execute_action(" ".join(parts))
 
@@ -157,13 +157,13 @@ def create_copper_unfolds(
     parts = ["reports", "/TYPE:CREATECOPPERUNFOLDS"]
 
     if project_name:
-        parts.append(f'/PROJECTNAME:"{project_name}"')
+        parts.append(_quote_param("PROJECTNAME", project_name))
     if replace_existing:
         parts.append("/REPLACEEXISTING:1")
 
     if templates:
         for i, t in enumerate(templates, 1):
-            parts.append(f'/TEMPLATE{i}:"{t}"')
+            parts.append(_quote_param(f"TEMPLATE{i}", t))
 
     return manager.execute_action(" ".join(parts))
 
@@ -189,12 +189,12 @@ def create_drilling_views(
     parts = ["reports", "/TYPE:CREATEDRILLINGVIEWS"]
 
     if project_name:
-        parts.append(f'/PROJECTNAME:"{project_name}"')
+        parts.append(_quote_param("PROJECTNAME", project_name))
     if replace_existing:
         parts.append("/REPLACEEXISTING:1")
 
     if templates:
         for i, t in enumerate(templates, 1):
-            parts.append(f'/TEMPLATE{i}:"{t}"')
+            parts.append(_quote_param(f"TEMPLATE{i}", t))
 
     return manager.execute_action(" ".join(parts))

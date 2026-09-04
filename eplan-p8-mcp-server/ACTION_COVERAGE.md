@@ -3,7 +3,10 @@
 Goal: let Claude drive EPLAN the way a human can — every API action *and* every
 GUI button — without publishing one MCP tool per action.
 
-Measured on **EPLAN Electric P8 2027.0.1 Premium** (`C:\Program Files\EPLAN\Platform\2027.0.1`).
+Measured on a reference installation of **EPLAN Electric P8 2027.0.1**.
+Counts below are transcribed from the committed data files rather than from a
+past session's prose; `tests/test_coverage_counts_offline.py` fails if the two
+drift apart again.
 
 ## The inventory
 
@@ -21,20 +24,22 @@ byte-stable (no timestamp), and degrades gracefully with a warning when
 
 ### What this install actually has
 
-`ActionManager.FindAction(name, silent=true)` probed over all 1148 candidate
+`ActionManager.FindAction(name, silent=true)` probed over all 1150 candidate
 names (`tools/data/live_actions_2027.json`):
 
-- **937 resolve** — registered, module loaded, licensed. Includes **all 100
-  documented actions**, so nothing in the official API is outside this
-  subscription.
-- 211 do not, and they are explained rather than mysterious:
+- **938 resolve** on that installation — registered and module loaded. This
+  included all 100 documented actions there; on any other machine the set
+  depends on which modules are installed and licensed, so treat the figure as
+  a property of the reference installation and not of the API.
+- 212 do not, and they are explained rather than mysterious:
   - 141 come only from the `Dialogs` section — those are **dialog ids**, not actions.
   - 46 are **GED interaction names** (values for `XGedStartInteractionAction /Name:`,
     not standalone actions) — extracted to `tools/data/ged_interaction_names.json`.
-  - **7 are genuine gaps**: `ExportActionPxcCxe`, `ExportActionPxcMarking`,
-    `ExportActionPxcPlanning`, `ExportActionPxcSettings` (Phoenix Contact add-on,
-    not installed), `XGedViewExternalDocumentAction`,
-    `XSettingsProjCreateAllDescAction`, `XSettingsProjCreateDescAction`.
+  - **7 are genuine gaps** on the reference installation: four
+    `ExportActionPxc*` actions, which belong to a third-party add-on that was
+    not present there, plus `XGedViewExternalDocumentAction`,
+    `XSettingsProjCreateAllDescAction` and `XSettingsProjCreateDescAction`.
+    An installation carrying that add-on will resolve the first four.
 
 ## How the actions are exposed
 
@@ -66,8 +71,9 @@ degraded tool selection for everything else.
 - `eplan_action_catalog(search, category, documented_only, wrapped, available_only, limit)`
   — offline registry search; always reports the true match count so a truncated
   list is never mistaken for the total. `available_only=True` restricts results
-  to the 937 actions the live probe found registered on this installation, and
-  every record carries `live_resolved` + `module_name`.
+  to the actions the recorded probe found registered on the reference
+  installation - advisory, not a licence check for the machine you are talking
+  to - and every record carries `live_resolved` + `module_name`.
 - `eplan_action_describe(name)` — registry entry + live `FindAction` probe
   (resolved? `ModuleName`?). Degrades to registry-only when disconnected.
 - `eplan_action_run(name, params, dry_run, allow_unknown_params)` — validated
@@ -101,7 +107,8 @@ So a button a human clicks can be found by name and then run with
 
 ## Testing
 
-**Offline: 411 passed, 2 skipped.** The 2 skips are the documentation
+**Offline: the whole suite runs with EPLAN closed.** Two tests skip: the
+documentation
 cross-check for `XAMlExportProductionData2SmartMountingAction` and
 `LockUnlockAllObjects` — the only two wrapped actions whose EPLAN doc page 404s,
 so there is no official parameter table to check their `/KEY`s against.
@@ -261,7 +268,7 @@ turned up no action page that is not already in the list.
 
 ```
 python tools/build_action_registry.py      # re-mine MFTools.xml + docs
-python -m pytest tests/ -q                 # 411 passed, 2 skipped expected
+python -m pytest tests/ -q                 # all green, 2 documented skips
 python tools/validate_actions.py --out tools/action_validation_report.md
 ```
 

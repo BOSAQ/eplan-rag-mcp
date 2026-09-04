@@ -39,8 +39,14 @@ answer for:
 Notes on the generated C#, all of them load-bearing (see the pitfalls section
 of e3d-installation-spaces.md):
 - No `using Eplan.EplApi.DataModel;` / `...HEServices;` - that is the CS0234 trap.
-- No index initializers (`new Dictionary<..> { ["k"] = v }`): the script engine
-  rejects them with CS1525. Dictionary entries are separate statements.
+- Index initializers (`new Dictionary<..> { ["k"] = v }`) are written as separate
+  `d["k"] = v;` statements here by CONVENTION, not by necessity. This note used
+  to say the script engine rejects them with CS1525; that is NOT true on 2027 -
+  a direct probe compiled and ran exactly that form. Corrected rather than
+  removed because the false version was load-bearing in a debugging session: it
+  sent someone hunting for a syntax error when the real fault was elsewhere.
+  Separate statements are still preferred, since they keep a long dictionary
+  diffable line by line.
 - Every value interpolated into the script goes through cs_escape.
 - Reflective calls are wrapped and InnerException chains flattened, because
   EPLAN wraps the real failure in TargetInvocationException.
@@ -200,6 +206,313 @@ _HELPERS = '''
             " in any loaded EPLAN assembly.");
     }
 
+    // ------------------------------------------------------------------
+    // Reflection helpers shared by every module that generates a script
+    // through _script(). The rule they all enforce: a lookup that finds
+    // NOTHING is an error that says what the type really declares - never a
+    // silently empty result. A silent miss is how a write reports success
+    // having done nothing, and the script engine gives no compiler output to
+    // fall back on.
+    // ------------------------------------------------------------------
+
+    // Turn a dead end into a one-turn fix by listing what is actually there.
+    static string MemberList(Type t, bool methods)
+    {
+        List<string> names = new List<string>();
+        Type cur = t;
+        BindingFlags bf = BindingFlags.Public | BindingFlags.Instance |
+                          BindingFlags.Static | BindingFlags.DeclaredOnly;
+        while (cur != null && names.Count < 250)
+        {
+            if (cur.FullName == "System.Object") break;
+            try
+            {
+                if (methods)
+                {
+                    foreach (MethodInfo mi in cur.GetMethods(bf))
+                        if (!names.Contains(mi.Name)) names.Add(mi.Name);
+                }
+                else
+                {
+                    foreach (PropertyInfo pi in cur.GetProperties(bf))
+                        if (!names.Contains(pi.Name)) names.Add(pi.Name);
+                }
+            }
+            catch { }
+            cur = cur.BaseType;
+        }
+        names.Sort();
+        return t.FullName + " declares " + (methods ? "methods" : "properties") +
+            ": " + string.Join(", ", names.ToArray());
+    }
+
+    // GetPropInfo returns the MOST DERIVED declaration, which is right for
+    // AmbiguousMatch but wrong when a derived class re-declares a member with
+    // only half the accessors: SymbolReference declares
+    // `public override PointD Location {set;}` while the READABLE declaration
+    // is on Placement. A most-derived lookup then hands back a PropertyInfo
+    // whose GetValue throws, the throw gets swallowed, and a pin OFFSET is
+    // published as an absolute page coordinate. So walk PAST a declaration
+    // that fails the accessor test.
+    static PropertyInfo GetPropWalk(Type t, string name, bool needRead, bool needWrite)
+    {
+        BindingFlags bf = BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+        Type cur = t;
+        while (cur != null)
+        {
+            PropertyInfo pi = null;
+            try { pi = cur.GetProperty(name, bf, null, null, Type.EmptyTypes, null); }
+            catch { pi = null; }
+            if (pi == null)
+            {
+                try { pi = cur.GetProperty(name, bf); } catch { pi = null; }
+            }
+            if (pi != null && (!needRead || pi.CanRead) && (!needWrite || pi.CanWrite)) return pi;
+            cur = cur.BaseType;
+        }
+        return null;
+    }
+
+    static PropertyInfo GetReadable(Type t, string name) { return GetPropWalk(t, name, true, false); }
+    static PropertyInfo GetWritable(Type t, string name) { return GetPropWalk(t, name, false, true); }
+
+    static PropertyInfo RequireReadable(Type t, string name)
+    {
+        PropertyInfo pi = GetReadable(t, name);
+        if (pi == null)
+            throw new Exception("No readable property '" + name + "'. " + MemberList(t, false));
+        return pi;
+    }
+
+    static PropertyInfo RequireWritable(Type t, string name)
+    {
+        PropertyInfo pi = GetWritable(t, name);
+        if (pi == null)
+            throw new Exception("No writable property '" + name + "'. " + MemberList(t, false));
+        return pi;
+    }
+
+    // Overload selection by SHAPE, matching parameter-type NAMES rather than
+    // typeof(): the script engine may compile against a different
+    // Eplan.EplApi.Base than the loaded object model references, and then a
+    // typeof()-built Type[] silently matches nothing. "" is a wildcard.
+    static MethodInfo MethodByShape(Type t, string name, string[] pTypeNames, bool wantStatic)
+    {
+        Type cur = t;
+        while (cur != null)
+        {
+            BindingFlags bf = BindingFlags.Public | BindingFlags.DeclaredOnly |
+                (wantStatic ? BindingFlags.Static : BindingFlags.Instance);
+            MethodInfo[] all = null;
+            try { all = cur.GetMethods(bf); } catch { all = null; }
+            if (all != null)
+            {
+                foreach (MethodInfo mi in all)
+                {
+                    if (mi.Name != name) continue;
+                    ParameterInfo[] ps = mi.GetParameters();
+                    if (ps.Length != pTypeNames.Length) continue;
+                    bool ok = true;
+                    for (int i = 0; i < ps.Length; i++)
+                    {
+                        if (pTypeNames[i].Length > 0 && ps[i].ParameterType.Name != pTypeNames[i])
+                        {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if (ok) return mi;
+                }
+            }
+            cur = cur.BaseType;
+        }
+        return null;
+    }
+
+    static MethodInfo RequireMethod(Type t, string name, string[] pTypeNames, bool wantStatic)
+    {
+        MethodInfo mi = MethodByShape(t, name, pTypeNames, wantStatic);
+        if (mi == null)
+            throw new Exception("No " + (wantStatic ? "static " : "instance ") + name + "(" +
+                string.Join(", ", pTypeNames) + ") on " + t.FullName + ". " + MemberList(t, true));
+        return mi;
+    }
+
+    // Every reflective call goes through here, so no primitive can return the
+    // useless "Exception has been thrown by the target of an invocation".
+    static object Call(MethodInfo mi, object target, object[] args)
+    {
+        try { return mi.Invoke(target, args); }
+        catch (TargetInvocationException tie)
+        {
+            throw new Exception(mi.DeclaringType.Name + "." + mi.Name + ": " +
+                Flatten(tie.InnerException));
+        }
+    }
+
+    // For TYPE-DEPENDENT members only (a DynamicConnectionLine has no
+    // SymbolVariant). Absence is RECORDED, never silently dropped. Load-bearing
+    // lookups use Require*, which throws.
+    static object TryRead(object o, string name, List<string> absent)
+    {
+        PropertyInfo pi = GetReadable(o.GetType(), name);
+        if (pi == null)
+        {
+            if (absent != null && !absent.Contains(name)) absent.Add(name);
+            return null;
+        }
+        try { return pi.GetValue(o, null); }
+        catch (TargetInvocationException tie)
+        {
+            if (absent != null) absent.Add(name + " (threw: " + Flatten(tie.InnerException) + ")");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            if (absent != null) absent.Add(name + " (threw: " + Flatten(ex) + ")");
+            return null;
+        }
+    }
+
+    // PropertyValue HAS NO PUBLIC CONSTRUCTOR - Activator.CreateInstance(pvType,
+    // "P1") throws MissingMethodException. It is built through its STATIC
+    // implicit conversion. Match on exact ParameterType AND
+    // ReturnType == target, because the REVERSE direction
+    // (PropertyValue -> String/Int32/...) shares the name op_Implicit.
+    static object MakeValue(Type targetType, object raw)
+    {
+        if (raw == null)
+            throw new Exception("Cannot build a " + targetType.FullName + " from null.");
+        Type src = raw.GetType();
+        MethodInfo conv = null;
+        foreach (MethodInfo mi in targetType.GetMethods(BindingFlags.Public | BindingFlags.Static))
+        {
+            if (mi.Name != "op_Implicit" && mi.Name != "op_Explicit") continue;
+            if (mi.ReturnType != targetType) continue;
+            ParameterInfo[] ps = mi.GetParameters();
+            if (ps.Length != 1) continue;
+            if (ps[0].ParameterType != src) continue;
+            conv = mi;
+            break;
+        }
+        if (conv == null)
+            throw new Exception("Cannot build a " + targetType.FullName + " from a " +
+                src.FullName + ": no public static conversion returning " + targetType.Name +
+                ". (PropertyValue has no public constructor, so this is the only route.) " +
+                MemberList(targetType, true));
+        try { return conv.Invoke(null, new object[] { raw }); }
+        catch (TargetInvocationException tie) { throw new Exception(Flatten(tie.InnerException)); }
+    }
+
+    // A CONSTRUCTED property list (e.g. a fresh PagePropertyList): its getter
+    // may hand back nothing to write through, so build the value and assign.
+    static string SetProp(object propList, string name, object raw)
+    {
+        PropertyInfo pi = GetWritable(propList.GetType(), name);
+        if (pi == null)
+            throw new Exception("Property list " + propList.GetType().FullName +
+                " has no writable '" + name + "'. " + MemberList(propList.GetType(), false));
+        object pv = MakeValue(pi.PropertyType, raw);
+        try { pi.SetValue(propList, pv, null); }
+        catch (TargetInvocationException tie) { throw new Exception(Flatten(tie.InnerException)); }
+        return "op_Implicit+SetValue";
+    }
+
+    // A LIVE object's property list, as opposed to a freshly constructed one:
+    // a PropertyValue fetched from it writes through on Set() - the route
+    // live_set_function_text field-proved. Falls back to SetProp and REPORTS
+    // which route fired, so the first live run settles it rather than guessing.
+    static string SetLiveProp(object propList, string name, string value)
+    {
+        PropertyInfo pi = GetReadable(propList.GetType(), name);
+        if (pi != null)
+        {
+            object pv = null;
+            try { pv = pi.GetValue(propList, null); } catch { pv = null; }
+            if (pv != null)
+            {
+                MethodInfo set = MethodByShape(pv.GetType(), "Set", new string[] { "String" }, false);
+                if (set != null)
+                {
+                    Call(set, pv, new object[] { value });
+                    return "getter+Set(string)";
+                }
+            }
+        }
+        return SetProp(propList, name, value);
+    }
+
+    // PointD identity: ptType ALWAYS comes from the member the point is handed
+    // to, never `new PointD(..)` and never FindType("Eplan.EplApi.Base.PointD").
+    static object MakePoint(Type ptType, double x, double y)
+    {
+        try { return Activator.CreateInstance(ptType, new object[] { x, y }); }
+        catch (Exception ex)
+        {
+            throw new Exception("Cannot construct " + ptType.FullName + "(double,double): " +
+                Flatten(ex));
+        }
+    }
+
+    // PointD.ToString() returns the TYPE NAME, not coordinates - and so does
+    // Page.Size. Read X/Y explicitly or every read-back says
+    // "Eplan.EplApi.Base.PointD".
+    static Dictionary<string, object> PtDict(object pt)
+    {
+        Dictionary<string, object> d = new Dictionary<string, object>();
+        if (pt == null) return d;
+        PropertyInfo px = GetReadable(pt.GetType(), "X");
+        PropertyInfo py = GetReadable(pt.GetType(), "Y");
+        if (px == null || py == null)
+            throw new Exception("Cannot read coordinates off " + pt.GetType().FullName +
+                " (its ToString() returns the type name, not a coordinate). " +
+                MemberList(pt.GetType(), false));
+        d["x"] = Math.Round(Convert.ToDouble(px.GetValue(pt, null)), 4);
+        d["y"] = Math.Round(Convert.ToDouble(py.GetValue(pt, null)), 4);
+        return d;
+    }
+
+    // Stringify anything EPLAN hands back, safely.
+    //
+    // Load-bearing, and NOT obvious: reading an EPLAN property succeeds and
+    // returns a PropertyValue, but calling ToString() on one whose property is
+    // EMPTY throws EmptyPropertyException - measured on 2027 while reading the
+    // connection-designation property of an ungenerated connection. So a
+    // try/catch around the READ is not enough; the conversion throws too, and
+    // separately from it.
+    //
+    // Anything that turns an EPLAN value into text must go through here.
+    static string SafeText(object value)
+    {
+        if (value == null) return null;
+        try
+        {
+            string s = value.ToString();
+            return s;
+        }
+        catch { return null; }   // an empty property is absence, not an error
+    }
+
+    // Stable within one EPLAN session; NOT a database id that survives a
+    // reopen. Callers get it back as "handle" and pass it to the next call.
+    static string Handle(object o)
+    {
+        try
+        {
+            MethodInfo mi = MethodByShape(o.GetType(), "ToStringIdentifier", new string[] { }, false);
+            if (mi == null) return null;
+            object v = mi.Invoke(o, null);
+            return v == null ? null : v.ToString();
+        }
+        catch { return null; }
+    }
+
+    static double Snap(double v, double grid)
+    {
+        if (grid <= 0.0001) return v;
+        return Math.Round(Math.Floor(v / grid + 0.5) * grid, 4);
+    }
+
     [Start]
     public void Run()
     {
@@ -248,15 +561,45 @@ _FOOTER = '''
 '''
 
 
-def _script(class_name, body):
+# Marker inside _HELPERS where the static helper block ends and the [Start]
+# method begins. Splitting there is how a caller injects its own static helpers
+# without this module having to know about them.
+_START_MARKER = "    [Start]\n"
+
+
+def _script(class_name, body, extra_helpers=""):
     """
     Wrap a reflection body in the standard script scaffold.
 
     The body may use: project (the open project) and results (the dict
-    serialized to {{RESULT_PATH}}). Helpers FindType, Flatten, Matches and
-    PropText are available as static methods.
+    serialized to {{RESULT_PATH}}). These static helpers are available:
+
+        FindType, Flatten, Matches, PropText, GetPropInfo, GetPropInfoIdx
+        MemberList, GetPropWalk, GetReadable, GetWritable,
+        RequireReadable, RequireWritable,
+        MethodByShape, RequireMethod, Call, TryRead,
+        MakeValue, SetProp, SetLiveProp, MakePoint, PtDict, Handle, Snap
+
+    Args:
+        class_name: C# class name for the generated script (must be unique per
+            execution; callers append a uuid fragment).
+        body: the reflection body, inserted inside Run()'s try block.
+        extra_helpers: additional static C# members for THIS module only,
+            spliced in just before [Start]. Use it for helpers that are
+            specific to one feature area rather than useful to every
+            reflection script (schematic.py does this).
     """
-    return _HEADER + class_name + _HELPERS + body + _FOOTER
+    helpers = _HELPERS
+    if extra_helpers:
+        if _START_MARKER not in helpers:  # pragma: no cover - guards a refactor
+            raise RuntimeError(
+                "live._HELPERS no longer contains the [Start] marker, so "
+                "extra_helpers cannot be spliced in. Fix _START_MARKER."
+            )
+        helpers = helpers.replace(
+            _START_MARKER, extra_helpers.rstrip() + "\n\n" + _START_MARKER, 1
+        )
+    return _HEADER + class_name + helpers + body + _FOOTER
 
 
 # Shared body fragment: build a DMObjectsFinder over the open project.

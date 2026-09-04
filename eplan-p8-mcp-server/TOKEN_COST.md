@@ -10,13 +10,22 @@ on demand. Optimise for that reality before refactoring.
 
 Reproduce the baseline:
 
+```bash
+python -m pytest tests/ -q          # confirm the tree is the one measured
+python tools/build_action_registry.py --help   # registry provenance
+```
 
+The byte census below was taken by serialising every registered tool's name,
+description and JSON schema exactly as the MCP protocol sends them, then
+counting characters; tokens are chars/4.
 
 ---
 
 # Getting EPLAN MCP token usage down — synthesis and ranked plan
 
-**Provenance:** I received 2 of the 4 investigation reports in full via the orchestrator (byte census; resources/protocol). I recovered the other two from their durable scratch files (`FINDINGS.txt`, `angleC/findings.txt`). All headline numbers below were re-measured by me against the live tree, not taken on trust. Three claims from the source reports are corrected here — flagged inline.
+**Provenance:** every headline number below was re-measured against this tree
+rather than carried over from an earlier estimate. Where a figure supersedes a
+previously circulated one, the correction is flagged inline.
 
 ---
 

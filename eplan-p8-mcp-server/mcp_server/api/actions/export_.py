@@ -147,12 +147,12 @@ def export_pdf_pages(
         use_print_margins: Use print margins
         export_model: Export 3D models
     """
-    parts = ["export", "/TYPE:PDFPAGESSCHEME", f'/EXPORTFILE:"{export_file}"']
+    parts = ["export", "/TYPE:PDFPAGESSCHEME", _quote_param("EXPORTFILE", export_file)]
 
     if project_name:
-        parts.append(f'/PROJECTNAME:"{project_name}"')
+        parts.append(_quote_param("PROJECTNAME", project_name))
     if export_scheme:
-        parts.append(f'/EXPORTSCHEME:"{export_scheme}"')
+        parts.append(_quote_param("EXPORTSCHEME", export_scheme))
 
     parts.append(f"/BLACKWHITE:{black_white}")
 
@@ -176,7 +176,7 @@ def export_pdf_pages(
     # Add page names
     if page_names:
         for i, page in enumerate(page_names, 1):
-            parts.append(f'/PAGENAME{i}:"{page}"')
+            parts.append(_quote_param(f"PAGENAME{i}", page))
 
     # Add page identifiers (SELn)
     if page_identifiers:
@@ -249,22 +249,22 @@ def export_dxf_pages(
     parts = ["export", "/TYPE:DXFPAGE"]
 
     if project_name:
-        parts.append(f'/PROJECTNAME:"{project_name}"')
+        parts.append(_quote_param("PROJECTNAME", project_name))
     if destination_path:
-        parts.append(f'/DESTINATIONPATH:"{destination_path}"')
+        parts.append(_quote_param("DESTINATIONPATH", destination_path))
     if export_scheme:
-        parts.append(f'/EXPORTSCHEME:"{export_scheme}"')
+        parts.append(_quote_param("EXPORTSCHEME", export_scheme))
     if language:
         parts.append(f"/LANGUAGE:{language}")
     if target:
         parts.append(f"/TARGET:{target}")
 
     if page_name:
-        parts.append(f'/PAGENAME:"{page_name}"')
+        parts.append(_quote_param("PAGENAME", page_name))
 
     if page_names:
         for i, page in enumerate(page_names, 1):
-            parts.append(f'/PAGENAME{i}:"{page}"')
+            parts.append(_quote_param(f"PAGENAME{i}", page))
 
     return manager.execute_action(" ".join(parts))
 
@@ -332,22 +332,22 @@ def export_dwg_pages(
     parts = ["export", "/TYPE:DWGPAGE"]
 
     if project_name:
-        parts.append(f'/PROJECTNAME:"{project_name}"')
+        parts.append(_quote_param("PROJECTNAME", project_name))
     if destination_path:
-        parts.append(f'/DESTINATIONPATH:"{destination_path}"')
+        parts.append(_quote_param("DESTINATIONPATH", destination_path))
     if export_scheme:
-        parts.append(f'/EXPORTSCHEME:"{export_scheme}"')
+        parts.append(_quote_param("EXPORTSCHEME", export_scheme))
     if language:
         parts.append(f"/LANGUAGE:{language}")
     if target:
         parts.append(f"/TARGET:{target}")
 
     if page_name:
-        parts.append(f'/PAGENAME:"{page_name}"')
+        parts.append(_quote_param("PAGENAME", page_name))
 
     if page_names:
         for i, page in enumerate(page_names, 1):
-            parts.append(f'/PAGENAME{i}:"{page}"')
+            parts.append(_quote_param(f"PAGENAME{i}", page))
 
     return manager.execute_action(" ".join(parts))
 
@@ -412,9 +412,9 @@ def export_dxfdwg_pages_scheme(
     parts = ["export", "/TYPE:DXFDWGPPAGESSCHEME"]
 
     if project_name:
-        parts.append(f'/PROJECTNAME:"{project_name}"')
+        parts.append(_quote_param("PROJECTNAME", project_name))
     if export_scheme:
-        parts.append(f'/EXPORTSCHEME:"{export_scheme}"')
+        parts.append(_quote_param("EXPORTSCHEME", export_scheme))
     if language:
         parts.append(f"/LANGUAGE:{language}")
     if target:
@@ -422,7 +422,7 @@ def export_dxfdwg_pages_scheme(
 
     if page_names:
         for i, page in enumerate(page_names, 1):
-            parts.append(f'/PAGENAME{i}:"{page}"')
+            parts.append(_quote_param(f"PAGENAME{i}", page))
 
     if page_identifiers:
         for i, sel in enumerate(page_identifiers, 1):

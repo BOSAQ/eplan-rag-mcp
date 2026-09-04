@@ -164,7 +164,8 @@ def test_pdf_export_wrappers_point_at_the_scheme_settings_node():
     somewhere else, and nothing in eplanMessages at all, because EPLAN did not
     consider it an error. The recovery route is the settings tree - which scheme
     EPLAN falls back to is readable at USER.PDFExportGUI.SCHEMAS.LastUsed
-    (measured 2026-09-03: "East River"). Pointing these docstrings at
+    (measured 2026-09-03: a site-specific scheme, name redacted - it is a 
+    client's). Pointing these docstrings at
     eplanMessages would be actively wrong, so what is pinned is the node.
     """
     for func_name in ("export_pdf_project", "export_pdf_pages"):
