@@ -276,3 +276,75 @@ Learning from a go-by ranked `Symbol Library - Special / CO` top with 175
 observations. That is not a device - it is the corner symbol, and it is the most
 common thing on a schematic page. A profile that treats it as device vocabulary
 is mis-reading the page; connection symbols should be classified separately.
+
+
+---
+
+# The connection vocabulary, read from the symbol library
+
+**Measured** 2026-09-03 on EPLAN 2027.0.1 by reflecting over `SPECIAL_en_US`.
+This is authoritative - it comes from the master data, not from inference.
+
+## PinBase.Direction is the missing piece
+
+`Eplan.EplApi.DataModel.PinBase+Directions` = `Undefined | Up | Right | Down | Left`
+
+Every connection point knows which way it FACES. That is what makes
+placement-based wiring computable: two pins connect when they are aligned on an
+axis AND face each other (one `Down` above one `Up`, or one `Right` left of one
+`Left`). Before finding this I was inferring "facing" from coordinates, which is
+guesswork.
+
+## Symbol.Type is the category
+
+`Symbol.Type` is an enum of 54 values. The connection-relevant ones, with how
+many symbols of each `SPECIAL_en_US` holds:
+
+| Symbol.Type | Count | Purpose |
+|---|---:|---|
+| `Function` | 29 | devices |
+| `Routing` | 1 | **`CO`** - the corner |
+| `DynamicRouting` | 1 | the free/diagonal line |
+| `TNodeUp` / `TNodeDown` / `TNodeLeft` / `TNodeRight` | 2/1/1/1 | branches |
+| `RoutingCross` | 1 | four-way cross |
+| `RoutingBridge` | 1 | hop over |
+| `InterruptionPoint` | 6 | cross-page jump |
+| `ConnectionDefinition` | - | `CDPNG`, `CDPNG2` - wire properties |
+| `PotentialTerminal` | 5 | potentials |
+| `Shielding` | 2 | shields |
+| `CableDefinitionLine` | 1 | cables |
+
+**T-nodes are separate symbol TYPES, not variants of one symbol.** Branching
+up/down/left/right means choosing a different symbol type, unlike corners.
+
+## CO variant -> orientation: the four quadrants
+
+| Variant | Pin directions | Turns |
+|---|---|---|
+| v0 | `Right` + `Down` | east and south |
+| v1 | `Right` + `Up` | east and north |
+| v2 | `Left` + `Up` | west and north |
+| v3 | `Left` + `Down` | west and south |
+
+To turn a corner, place `CO` at the turn and pick the variant whose two
+directions match the two legs. Both its connection points sit AT the corner
+location (relative 0,0), so the corner is a point, not a segment.
+
+## CDPNG vs CDPNG2
+
+Both are `Symbol.Type = ConnectionDefinition`, both have a single variant v0
+with **no connection points at all**. So they are structurally identical, and
+the difference between them is presentational - which properties the symbol
+displays - not functional. Either can carry a connection's wire number, colour
+and cross-section. (125 CDPNG2 vs 67 CDPNG on one page suggests house
+convention, not a technical distinction.)
+
+## What this makes buildable
+
+Everything needed for placement-driven wiring is now readable:
+
+    Symbol.Type          -> is this a device, a corner, a T-node, a break?
+    PinBase.Direction    -> which way does this connection point face?
+    SymbolVariant        -> which orientation of that symbol?
+
+so "place B so its pin faces A's pin" is a calculation, not a guess.
