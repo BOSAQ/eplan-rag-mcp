@@ -197,6 +197,7 @@ def import_pdf_comments(
 
 def import_3d(
     import_file: str,
+    type: str,
     project_name: str = None,
     import_scheme: str = None
 ) -> dict:
@@ -204,19 +205,35 @@ def import_3d(
     Import 3D data.
     Action: import3d
 
+    Live-verified 2026-09-04 (2025.0.3, Pro Panel licensed): the previous
+    wrapper never sent the mandatory TYPE and sent IMPORTSCHEME, which is not
+    a real import3d parameter (the action documents SCHEME) - EPLAN answered
+    every call with "Este proceso no es compatible." and nothing was
+    imported. See Audit #42 item 4.
+
     Args:
-        import_file: Path to 3D file
-        project_name: Project path (optional)
-        import_scheme: Import scheme name
+        import_file: Path to the 3D file to import.
+        type: "STEP", "DESIGNSPACE" (a design space, itself a STEP file), or
+            "JT". Mandatory - the action has no default and silently rejects
+            the call without it.
+        project_name: Project path (optional). Required if there is no
+            project with focus in the EPLAN GUI.
+        import_scheme: Import scheme (optional). If omitted, the last-used
+            scheme applies.
     """
     manager, error = _get_connected_manager()
     if error:
         return error
 
+    if type not in ("STEP", "DESIGNSPACE", "JT"):
+        return {"success": False,
+                "error": f"type must be 'STEP', 'DESIGNSPACE' or 'JT', got {type!r}."}
+
     action = _build_action(
         "import3d",
+        TYPE=type,
         IMPORTFILE=import_file,
         PROJECTNAME=project_name,
-        IMPORTSCHEME=import_scheme
+        SCHEME=import_scheme
     )
     return manager.execute_action(action)

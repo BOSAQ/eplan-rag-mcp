@@ -31,10 +31,21 @@ import inspect
 import json
 from typing import List, Union
 
+from pydantic import ValidationError
+
+try:
+    from mcp.server.fastmcp.utilities.func_metadata import func_metadata
+except ImportError:  # pragma: no cover - depends on the installed mcp package
+    func_metadata = None
+
 __all__ = ["ToolRegistry", "make_meta_tools", "META_TOOL_NAMES"]
 
 
 META_TOOL_NAMES = ("tools_search", "tools_describe", "tools_call")
+
+
+class _ArgValidationError(Exception):
+    """Internal signal: ToolRegistry.call's argument coercion failed."""
 
 # Search/describe caps. limit is clamped rather than rejected: an over-eager
 # limit=1000 should not error, it should just stop short of re-publishing the
@@ -387,12 +398,61 @@ class ToolRegistry:
                     "required_parameters": required,
                 }
 
+        # Full mode reaches every tool through FastMCP's own
+        # fn_metadata.call_fn_with_arg_validation, which validates AND coerces
+        # arguments against the function's annotations (str "5" -> int 5, str
+        # "true" -> bool True, etc). This call bypassed that and went straight
+        # to func(**arguments), so discovery mode accepted argument TYPES full
+        # mode would reject - silently producing a wrong EPLAN action instead
+        # of a validation error. Audit #42 item 9.
+        try:
+            arguments = self._coerce_arguments(func, arguments)
+        except _ArgValidationError as e:
+            return {"success": False, "tool": resolved,
+                    "error": "Argument validation failed: %s" % (e,)}
+
         try:
             result = func(**arguments)
         except Exception as e:  # mirrors server.py's tool wrapper
             return {"success": False, "tool": resolved, "error": str(e)}
 
         return _normalize_result(result)
+
+    @staticmethod
+    def _coerce_arguments(func, arguments):
+        """
+        Validate and coerce *arguments* against *func*'s annotations the same
+        way FastMCP's full-mode dispatch does.
+
+        Returns the coerced dict. Raises _ArgValidationError on a real
+        validation failure. Falls back to the raw arguments, unchanged,
+        rather than blocking the call, for anything the fast path cannot
+        usefully handle:
+
+        - func_metadata cannot build a model at all (not introspectable), or
+        - func takes a bare **kwargs tail (action_args/raw_args-style passthrough
+          wrappers, an intentional pattern elsewhere in this codebase).
+          func_metadata does not spread **kwargs's keys into flexible fields;
+          it treats the parameter's own NAME as one required field, which
+          would reject every legitimate call to this genuinely supported
+          shape. See test_new_actions_offline.py's "raw_tails" set.
+        """
+        if func_metadata is None:
+            return arguments
+        try:
+            sig = inspect.signature(func)
+        except (TypeError, ValueError):
+            return arguments
+        if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+            return arguments
+        try:
+            meta = func_metadata(func)
+            validated = meta.arg_model.model_validate(arguments)
+        except ValidationError as e:
+            raise _ArgValidationError(str(e)) from None
+        except Exception:
+            return arguments
+        return validated.model_dump_one_level()
 
 
 def _normalize_result(result):
