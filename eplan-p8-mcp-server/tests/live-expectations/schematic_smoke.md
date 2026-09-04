@@ -348,3 +348,51 @@ Everything needed for placement-driven wiring is now readable:
     SymbolVariant        -> which orientation of that symbol?
 
 so "place B so its pin faces A's pin" is a calculation, not a guess.
+
+## `live_routing_catalog`, measured
+
+Run against a clone of a production project on 2027.0.1, 7 symbol libraries.
+**24 connection symbols, every one of them in `SPECIAL_en_US`** — the six device
+libraries hold none:
+
+| `Symbol.Type` | symbols |
+| --- | --- |
+| `Routing` | `CO` |
+| `TNodeUp` | `TLRO`, `TLRO_1` |
+| `TNodeDown` | `TLRU` |
+| `TNodeLeft` | `TOUL` |
+| `TNodeRight` | `TOUR` |
+| `RoutingCross` | `CR` |
+| `RoutingBridge` | `BR` |
+| `DynamicRouting` | `CRL` |
+| `InterruptionPoint` | `BP`, `BP2`, `BPOL`, `BPNFPA`, `BPIN`, `BPOUT` |
+| `ConnectionDefinition` | `CDPNG2` |
+| `PotentialTerminal` | `PCP`, `PCP5`, `PCPOL`, `PDCP2`, `PDCP2OL` |
+| `Shielding` | `SH`, `SH2` |
+| `CableDefinitionLine` | `CABDL` |
+
+`CO` carries all four corners as variants:
+
+    v0 Right+Down    v1 Right+Up    v2 Left+Up    v3 Left+Down
+
+A branch does NOT work that way. It is a separate `Symbol.Type` per direction —
+`TNodeUp` is a different type from `TNodeDown`, not a variant of one type. So
+corners are picked by variant and T-nodes by type. That asymmetry is why
+selection has to be driven off `Symbol.Type` plus pin directions rather than off
+a symbol name.
+
+### Two symbols of the same type, differing only in pin ORDER
+
+The reason the catalog reports ordered directions instead of a sorted set:
+
+    TLRO    v2: Right+Left+Up      TLRO_1  v2: Right+Up+Left
+    TLRO    v3: Left+Right+Up      TLRO_1  v3: Left+Up+Right
+
+Both are `TNodeUp`; both face the same three directions. Sorting the directions
+would make them look interchangeable. So the catalog matches on the direction
+SET, but reports the ORDER, and when more than one symbol matches it returns
+them ALL with `ambiguous: true` rather than choosing — which of the two is
+correct is a house convention, not something the tool can derive.
+
+Queried live: `directions=["Right","Down"]` → exactly `SPECIAL_en_US/CO` v0.
+`directions=["Up","Left","Right"]` → both `TLRO` and `TLRO_1`, flagged ambiguous.

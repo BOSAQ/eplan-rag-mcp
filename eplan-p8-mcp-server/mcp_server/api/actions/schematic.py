@@ -103,6 +103,7 @@ __all__ = [
     "live_set_device_tag",
     "live_read_connections",
     "live_connect_pins_routed",
+    "live_routing_catalog",
 ]
 
 
@@ -2027,5 +2028,255 @@ def live_connect_pins_routed(page: str, from_handle: str, from_pin: int,
             "Two graphical segments were drawn through the corner. Whether "
             "EPLAN has created a LOGICAL connection is a separate question - "
             "run eplan_generate_connections then live_read_connections."
+        )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 11. Discover the connection symbols (corners, T-nodes, breaks)
+# ---------------------------------------------------------------------------
+
+# Symbol.Type values that are CONNECTION symbols rather than devices. From the
+# 54-value Symbol.Type enum; these are the ones that participate in wiring.
+ROUTING_SYMBOL_TYPES = (
+    "Routing",             # a corner
+    "DynamicRouting",      # free/diagonal routing
+    "RoutingCross",        # four-way cross
+    "RoutingBridge",       # hop over
+    "TNodeUp", "TNodeDown", "TNodeLeft", "TNodeRight",
+    "InterruptionPoint",   # cross-page jump
+    "ConnectionDefinition",  # carries wire number / colour / cross-section
+    "PotentialDefinition", "PotentialTerminal",
+    "Shielding", "CableDefinitionLine", "NetDefinition",
+)
+
+_HELPERS_ROUTING = r'''
+    // Ordered pin directions of one symbol variant, e.g. ["Right","Down"].
+    //
+    // ORDER MATTERS and is reported rather than sorted: TLRO and TLRO_1 are
+    // both TNodeUp and differ ONLY in pin order (Right+Left+Up vs
+    // Right+Up+Left). Sorting would erase the distinction and make two
+    // genuinely different symbols look interchangeable.
+    static List<object> VariantDirections(object variant)
+    {
+        List<object> dirs = new List<object>();
+        object cps = TryRead(variant, "ConnectionPoints", null);
+        if (!(cps is IEnumerable)) return dirs;
+        foreach (object p in (IEnumerable)cps)
+        {
+            if (p == null) continue;
+            object d = TryRead(p, "Direction", null);
+            dirs.Add(d == null ? "Undefined" : SafeText(d));
+        }
+        return dirs;
+    }
+
+    static Dictionary<string, object> DumpSymbol(object sym, string libName, Type symT, Type varT)
+    {
+        Dictionary<string, object> d = new Dictionary<string, object>();
+        d["library"] = libName;
+        d["symbol"] = PropText(sym, "Name");
+        d["type"] = PropText(sym, "Type");
+        List<object> vs = new List<object>();
+        object variants = TryRead(sym, "Variants", null);
+        if (variants is IEnumerable)
+        {
+            foreach (object v in (IEnumerable)variants)
+            {
+                if (v == null) continue;
+                List<object> dirs = VariantDirections(v);
+                if (dirs.Count == 0) continue;
+                Dictionary<string, object> vd = new Dictionary<string, object>();
+                object vn = TryRead(v, "VariantNr", null);
+                vd["variantNr"] = vn == null ? -1 : Convert.ToInt32(vn);
+                vd["directions"] = dirs;
+                vs.Add(vd);
+            }
+        }
+        d["variants"] = vs;
+        return d;
+    }
+'''
+
+
+def live_routing_catalog(symbol_type: str = None, directions: list = None,
+                         library: str = None,
+                         timeout_seconds: float = 180.0) -> dict:
+    """
+    Discover the CONNECTION symbols this project can use - corners, T-nodes,
+    crosses, interruption points - and which directions each variant faces.
+
+    You need this before placing any of them, and it must be DISCOVERED rather
+    than assumed: a project carries several symbols for the same job. Measured
+    on one production installation, `SPECIAL_en_US` alone holds 16, including
+    TWO different `TNodeUp` symbols (`TLRO` and `TLRO_1`) that differ only in
+    pin ORDER, and six interruption-point symbols - some two-pin, some one-pin
+    and directional.
+
+    So "the corner symbol" is not a constant. Ask what this project has.
+
+    A connection symbol is identified by `Symbol.Type`, not by its name. The
+    types that matter:
+
+        Routing            a corner
+        TNodeUp/Down/Left/Right    a branch - a SEPARATE TYPE per direction,
+                           not a variant, unlike corners
+        RoutingCross       four-way crossing
+        RoutingBridge      hop over without connecting
+        DynamicRouting     free/diagonal routing
+        InterruptionPoint  cross-page jump
+        ConnectionDefinition  carries wire number, colour, cross-section
+        PotentialDefinition, PotentialTerminal, Shielding,
+        CableDefinitionLine, NetDefinition
+
+    Reads only.
+
+    Args:
+        symbol_type: Filter to one Symbol.Type, e.g. "Routing" for corners or
+            "TNodeUp" for upward branches. Omit for all connection symbols.
+        directions: Filter to variants whose pins face exactly this SET of
+            directions, e.g. ["Right", "Down"] for a corner turning east and
+            south. Order is ignored for matching but REPORTED in the result,
+            because two symbols of the same type can differ only in pin order.
+        library: Restrict to one symbol library. Omit to search all the
+            project's libraries - which is usually right, since on the measured
+            installation every routing symbol lived in ONE library and the
+            device libraries had none.
+        timeout_seconds: Default 180s; this walks every library.
+
+    Returns:
+        {"success", "libraries" (all searched), "symbols": [...], "matched",
+         "byType"}
+
+        Each symbol: {"library", "symbol", "type", "variants": [{"variantNr",
+        "directions": ["Right","Down"]}]}.
+
+        When `directions` is given, each symbol also carries "matchingVariants"
+        - the variant numbers whose direction SET matches. If more than one
+        symbol matches, they are ALL returned rather than one being chosen:
+        which is correct is a house convention, not something this can decide.
+    """
+    try:
+        stype = cs_text(symbol_type, "symbol_type") if symbol_type else None
+        lib_cs = cs_escape(cs_text(library, "library")) if library else None
+        want = None
+        if directions:
+            if isinstance(directions, str):
+                directions = [directions]
+            valid = {"Up", "Down", "Left", "Right", "Undefined"}
+            want = []
+            for d in directions:
+                d = cs_text(d, "directions entry").strip().title()
+                if d not in valid:
+                    return {"success": False,
+                            "error": "Unknown direction %r. PinBase.Directions is "
+                                     "Up, Down, Left, Right (or Undefined)." % d}
+                want.append(d)
+    except SchematicValueError as exc:
+        return _err(exc)
+
+    if stype and stype not in ROUTING_SYMBOL_TYPES:
+        return {
+            "success": False,
+            "error": "symbol_type %r is not a connection-symbol type. Known: %s"
+                     % (stype, ", ".join(ROUTING_SYMBOL_TYPES)),
+        }
+
+    types_cs = ", ".join('"%s"' % t for t in ([stype] if stype else ROUTING_SYMBOL_TYPES))
+    lib_filter = ""
+    if lib_cs:
+        lib_filter = '                if (ln != LIBNAME) continue;\n'
+
+    body = '''            Type symT = FindType("Eplan.EplApi.DataModel.MasterData.Symbol");
+            Type varT = FindType("Eplan.EplApi.DataModel.MasterData.SymbolVariant");
+            Type libT = FindType("Eplan.EplApi.DataModel.MasterData.SymbolLibrary");
+            ConstructorInfo libCtor = libT.GetConstructor(new Type[] { project.GetType(), typeof(string) });
+            if (libCtor == null)
+                throw new Exception("SymbolLibrary has no (Project, string) ctor. " +
+                    MemberList(libT, true));
+            ConstructorInfo symByIdx = symT.GetConstructor(new Type[] { libT, typeof(int) });
+            if (symByIdx == null)
+                throw new Exception("Symbol has no (SymbolLibrary, int) ctor. " +
+                    MemberList(symT, true));
+
+            List<string> wantTypes = new List<string>(new string[] { TYPES });
+
+            PropertyInfo slProp = RequireReadable(project.GetType(), "SymbolLibraries");
+            object sl = slProp.GetValue(project, null);
+            List<string> libNames = new List<string>();
+            if (sl is IEnumerable)
+                foreach (object one in (IEnumerable)sl)
+                {
+                    if (one == null) continue;
+                    string n = PropText(one, "Name");
+                    if (n != null) libNames.Add(n);
+                }
+            results["libraries"] = libNames;
+
+            List<object> found = new List<object>();
+            foreach (string ln in libNames)
+            {
+''' + lib_filter + '''                object lib = null;
+                try { lib = libCtor.Invoke(new object[] { project, ln }); }
+                catch { continue; }   // a library the project lists but cannot open
+                for (int i = 0; i < 5000; i++)
+                {
+                    object s = null;
+                    try { s = symByIdx.Invoke(new object[] { lib, i }); }
+                    catch { break; }  // walked off the end
+                    if (s == null) break;
+                    if (PropText(s, "IsValid") != "True") continue;
+                    string tn = PropText(s, "Type");
+                    if (tn == null || !wantTypes.Contains(tn)) continue;
+                    found.Add(DumpSymbol(s, ln, symT, varT));
+                }
+            }
+            results["symbols"] = found;
+'''
+    body = _fill(body, TYPES=types_cs, **({"LIBNAME": '"%s"' % lib_cs} if lib_cs else {}))
+
+    out = _shape(_execute_script(
+        _script(_cls("RoutCat"), body,
+                extra_helpers=_HELPERS_SCHEMATIC + _HELPERS_ROUTING),
+        timeout=timeout_seconds,
+    ))
+    if not out.get("success"):
+        return out
+
+    syms = out.get("symbols") or []
+
+    # Direction matching happens HERE, not in C#, so it is testable offline.
+    if want:
+        target = sorted(want)
+        for s in syms:
+            s["matchingVariants"] = [
+                v["variantNr"] for v in (s.get("variants") or [])
+                if sorted(v.get("directions") or []) == target
+            ]
+        syms = [s for s in syms if s["matchingVariants"]]
+        out["symbols"] = syms
+        out["requestedDirections"] = want
+
+    out["matched"] = len(syms)
+    by_type = {}
+    for s in syms:
+        by_type.setdefault(s.get("type"), []).append(s.get("symbol"))
+    out["byType"] = by_type
+
+    if want and len(syms) > 1:
+        out["ambiguous"] = True
+        out["note"] = (
+            "%d symbols match those directions (%s). Which one is right is a "
+            "house convention, not something this can decide - pick from the "
+            "project's own usage, or ask. Note that two symbols of the same "
+            "type can differ only in pin ORDER, which is reported per variant."
+            % (len(syms), ", ".join("%s/%s" % (s["library"], s["symbol"])
+                                    for s in syms))
+        )
+    elif want and not syms:
+        out["note"] = (
+            "No symbol in this project has a variant facing exactly %s. Call "
+            "again without `directions` to see what the project does have."
+            % (want,)
         )
     return out
