@@ -23,6 +23,12 @@ At depth 3, pin `"raw"` coordinates are relative to the symbol's own insertion
 point — meaningless as page coordinates until actually placed. Depth-2
 `connectionPoints >= 2` is the practical filter for "this can be wired."
 
+**But depth 2 does not list everything, and claims it does.** The listing
+stops after `SymbolId` 72 while reporting `truncated: false`; a symbol above
+that id is invisible to it and to its `contains` filter, yet resolves and
+places fine when named at depth 3. Never read "not in the depth-2 listing" as
+"not in the project" — see `09-symbol-catalog-enumeration-gap.md`.
+
 ## `live_place_symbol` — the reliable, headless path
 
 Calls `Function.Create(Page, SymbolVariant, PointD, PointD)` directly against

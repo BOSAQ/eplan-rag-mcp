@@ -83,6 +83,14 @@ lowercased on both sides, so it is not affected — a hand-rolled
   `visual_description`, a *textual* description of the pictogram, not
   coordinates) — `live_symbol_catalog(library=..., symbol=...)` remains the
   only source for where a symbol's connection points actually are.
+- **Update — for high-id symbols the dataset is not optional.**
+  `09-symbol-catalog-enumeration-gap.md` establishes that
+  `live_symbol_catalog`'s library listing stops after `SymbolId` 72. Every
+  symbol above that (`CDP`=308, `CDPU`=338, `DCP2JICM`=402 …) is unreachable
+  by browsing the live catalog at all — it can only be resolved by asking for
+  it *by exact name*, which means the name has to come from somewhere else.
+  This dataset is that somewhere. The confirmation step below still applies,
+  it just moves to depth 3.
 - **Existence in a specific project's libraries is not guaranteed.** The
   dataset spans IEC/NFPA/GB families generically; a name it lists is not
   proof that name resolves in *this* project's `.edb` master data. Every

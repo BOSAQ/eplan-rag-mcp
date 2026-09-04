@@ -23,7 +23,28 @@ tools reading it at different moments can legitimately disagree.
 cross-check, and it is worth doing before any batch of writes rather than
 trusting the project you started with.
 
-## 2. `live_place_symbol` cannot place a terminal — and fails non-atomically
+## 2. `live_place_symbol` cannot place a `Terminal` — and fails non-atomically
+
+**The boundary is the CLR class EPLAN instantiates, not what the symbol looks
+like.** Measured both sides of it on the same page:
+
+| call | symbol | EPLAN returned |
+|---|---|---|
+| failed | `IEC_symbol/X` — "Terminal", id 30 | `clrType: "Terminal"` — orphaned at `(0,0)` |
+| worked | `SPECIAL/DCP2JICM` — "Device connection point, two-sided (ANSI-JIC male pin)", id 402 | `clrType: "Function"` |
+
+A *device connection point* draws like a terminal but is an ordinary
+`Function`, and `Function.Create` places it without complaint. A terminal-strip
+terminal is not: EPLAN promotes the object to the `Terminal` subclass, and that
+is where `Function.Create` breaks. So "cannot place terminals" is too broad —
+the accurate claim is "cannot place objects EPLAN instantiates as `Terminal`".
+
+And the distinction is **not predictable from the catalog**:
+`live_symbol_catalog(library="IEC_symbol", symbol="X")` reports
+`symbolType: "Function"`, the same as `DCP2JICM`. The only way to know which
+side of the line a symbol falls on is to try it — and then check the page, per
+the rule below.
+
 
 ```
 live_place_symbol(page, "IEC_symbol", "X", x=60, y=144, variant_nr=0)
