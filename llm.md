@@ -26,12 +26,12 @@ Use one of these whenever you are unsure of an exact action name or parameter �
 
 ## 2. The local `eplan` action server
 
-It exposes **205 tools** (full tool-by-tool reference: [the project wiki](https://github.com/covagashi/eplan-rag-mcp/wiki)):
+It exposes **207 tools** (full tool-by-tool reference: [the project wiki](https://github.com/covagashi/eplan-rag-mcp/wiki)):
 
 - **8 connection/utility tools**: `eplan_versions`, `eplan_servers`,
   `eplan_connect`, `eplan_status`, `eplan_ping`, `eplan_test`,
   `eplan_disconnect`, `eplan_list_extensions`.
-- **193 EPLAN action tools** → `eplan_<action>` (e.g. `eplan_open_project`).
+- **195 EPLAN action tools** → `eplan_<action>` (e.g. `eplan_open_project`).
   Includes 5 discovery tools (`eplan_settings_list_children`,
   `eplan_list_schemes`, `eplan_list_report_templates`, `eplan_list_layers`,
   `eplan_list_enums`) that enumerate real EPLAN catalogs instead of guessing,
@@ -45,7 +45,11 @@ It exposes **205 tools** (full tool-by-tool reference: [the project wiki](https:
   `eplan_live_remove_placement`) that CREATE a schematic rather than only
   reading one - every write returns the page read-back as proof and an undo
   handle, and writes refuse a project outside the scratch root unless
-  `allow_real_project=True`, application lifecycle
+  `allow_real_project=True`, plus `eplan_live_verify_page` (check a page against
+  a description written in live_read_page's own schema, so the read format
+  doubles as the specification format) and `eplan_live_set_device_tag` (a placed
+  function is anonymous until tagged; a duplicate tag is refused by default
+  because it would MERGE devices), application lifecycle
   control (`eplan_app_launch`, `eplan_app_shutdown`, `eplan_app_restart` —
   full exit/relaunch/reconnect/reopen cycles for unattended add-in
   deploy-test loops), scratch project fixtures
