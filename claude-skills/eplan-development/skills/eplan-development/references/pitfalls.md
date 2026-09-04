@@ -161,10 +161,26 @@ measured at roughly 44% of total run time for a small script. Call
 `ExecuteScript` alone for one-shot scripts; reserve `RegisterScript`/
 `UnregisterScript` for scripts you're actually loading persistently.
 
-## 10. Scripts compile as C# 5 — and a compile error looks exactly like a hang
+## 10. A compile error looks exactly like a hang — and the C# level is version-specific
 
-EPLAN's script engine compiles with a **pre-C# 6** compiler. These are all
-syntax errors in a script, however normal they look:
+**The part that is always true:** a compile error is invisible to the caller.
+Everything below is about spotting it.
+
+**The part that depends on your version:** on **2026** the script engine
+compiles with a **pre-C# 6** compiler, verified by probe — `?.` gives
+`CS1525`, and `new Dictionary<string, object> { ["a"] = 1 }` gives
+`CS1525: Invalid expression term '['`. On **2027** a direct probe compiled
+and ran that same dictionary index initializer. So the engine's C# level
+moved somewhere between the two, and neither "it's C# 5" nor "modern C#
+works" is safe to assume across versions.
+
+Treat the table below as the **2026 (and earlier) floor**. Write to it when
+a script has to run on a mixed fleet; probe first if you want to rely on
+anything newer. A one-line probe settles it in seconds — a script that
+compiles writes its result file, one that doesn't leaves a `CS####` in the
+message tree.
+
+These are all syntax errors on 2026, however normal they look:
 
 | Feature | C# | Symptom | Write instead |
 |---|---|---|---|
@@ -203,6 +219,28 @@ lines between them — and the generated file name is in both, so you can pick
 out the messages belonging to one script. In this repo,
 `_execute_script` in `scripted.py` does exactly that and reports
 `compile_errors` instead of a bare timeout.
+
+### A compile error is not the only silent timeout
+
+Same symptom — no result file, caller reports a timeout — different cause.
+Check these before assuming syntax:
+
+- **A wrong member name is `CS1061`, i.e. still a compile error.** The trap
+  is that the name looks right. `MDPart` has **no `ProductTopGroup`** member:
+  that is the name of the enum *type*, and the property holding it is
+  `GenericProductGroup`. Reflect over the type and read the real names rather
+  than trusting a plausible one.
+- **Leaving live EPLAN objects in what you serialize will hang the script.**
+  An `MDPropertyValue` stored straight into the dictionary that
+  `JsonConvert.SerializeObject` walks sends the serializer off through a
+  native object graph, and the script never finishes. This one compiles
+  fine — it is a genuine hang, not a compile error, so the message tree is
+  empty. Flatten every value to a string/number *before* it goes in.
+- **A runtime exception inside `[Start]`** — see the last note below.
+
+Distinguishing them: if the message tree has a `CS####` for your script, it
+is a compile error. If the tree is clean and the script still produced
+nothing, suspect the serializer or an unhandled exception.
 
 Two related notes:
 

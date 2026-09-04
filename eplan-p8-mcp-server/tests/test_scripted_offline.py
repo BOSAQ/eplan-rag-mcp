@@ -333,3 +333,14 @@ def test_diagnostics_do_not_recurse(fake_eplan, monkeypatch):
 
     assert result["success"] is False
     assert len(calls) == 1, "diagnostics recursed"
+
+
+def test_get_part_uses_generic_product_group(capture):
+    """MDPart has no ProductTopGroup member - that is the name of the enum
+    TYPE. Reflection over MDPart (2026) lists ProductGroup, ProductSubGroup
+    and GenericProductGroup. Using the wrong one is CS1061: another compile
+    error, another silent timeout."""
+    scripted.parts_db_get_part("PN-1")
+    script = capture["script"]
+    assert "part.GenericProductGroup" in script
+    assert "part.ProductTopGroup" not in script
