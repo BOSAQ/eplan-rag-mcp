@@ -35,6 +35,52 @@ def _resolve_project_parts(elk_path: str):
     return elk_path, base + ".edb", os.path.basename(base)
 
 
+def _reject_unsafe_name(name: str):
+    """
+    Validate a caller-supplied clone name that will be used as a FILENAME.
+
+    Returns None when the name is safe, otherwise a ready-to-return error dict.
+
+    Rejected, with the reason each one matters:
+      - empty / whitespace       would build ".elk" in the scratch root
+      - a path separator         "a/b" escapes into a subdirectory
+      - ".." as a segment        classic traversal
+      - a drive letter ("C:")    os.path.join DISCARDS the base for these
+      - a leading "\\\\"           UNC path, writes to another machine
+      - "." or ".."              resolve to the directory itself
+      - a reserved device name   CON/PRN/AUX/NUL/COM1.. are not files on Windows
+    """
+    if not name or not name.strip():
+        return {"success": False,
+                "error": "name must not be empty."}
+    if name != name.strip():
+        return {"success": False,
+                "error": f"name must not have leading/trailing whitespace: {name!r}"}
+    for sep in (os.sep, os.altsep, "/", "\\"):
+        if sep and sep in name:
+            return {"success": False,
+                    "error": (f"name must be a bare project name, not a path: "
+                              f"{name!r} contains {sep!r}.")}
+    if name in (".", ".."):
+        return {"success": False,
+                "error": f"name must not be {name!r}."}
+    # A colon means a drive letter or an NTFS alternate data stream; either way
+    # it is not a bare name.
+    if ":" in name:
+        return {"success": False,
+                "error": f"name must not contain ':': {name!r}"}
+    if os.path.isabs(name):
+        return {"success": False,
+                "error": f"name must be relative, not an absolute path: {name!r}"}
+    reserved = {"CON", "PRN", "AUX", "NUL"}
+    reserved |= {f"COM{i}" for i in range(1, 10)}
+    reserved |= {f"LPT{i}" for i in range(1, 10)}
+    if name.split(".")[0].upper() in reserved:
+        return {"success": False,
+                "error": f"name is a reserved Windows device name: {name!r}"}
+    return None
+
+
 def _inside_scratch(path: str) -> bool:
     try:
         return os.path.commonpath(
@@ -71,6 +117,18 @@ def scratch_project_create(template_project: str, name: str = None,
                 "error": f"Template .edb directory not found next to the .elk: {src_edb}"}
 
     clone_base = name or f"{src_base}_scratch_{time.strftime('%Y%m%d_%H%M%S')}"
+
+    # `name` becomes a filename, so it must be a bare name and nothing else.
+    # os.path.join happily absorbs "../.." and DISCARDS the base entirely for an
+    # absolute path or a drive letter, so an unchecked name lands the clone
+    # wherever the user can write - including a real project tree, where
+    # scratch_project_discard then refuses to clean it up because it sits
+    # outside the scratch root. That one-sided guard is the bug: discard checked
+    # containment, create did not.
+    name_error = _reject_unsafe_name(clone_base)
+    if name_error:
+        return name_error
+
     # Uniquify if the name is taken.
     dst_dir = SCRATCH_ROOT
     os.makedirs(dst_dir, exist_ok=True)
@@ -81,6 +139,18 @@ def scratch_project_create(template_project: str, name: str = None,
         counter += 1
     dst_elk = os.path.join(dst_dir, candidate + ".elk")
     dst_edb = os.path.join(dst_dir, candidate + ".edb")
+
+    # Belt and braces: even with a validated name, assert the built paths really
+    # are inside the scratch root before anything is written.
+    for built in (dst_elk, dst_edb):
+        if not _inside_scratch(built):
+            return {
+                "success": False,
+                "error": (
+                    f"Refusing to create outside the scratch root: {built} is "
+                    f"not under {SCRATCH_ROOT}."
+                ),
+            }
 
     try:
         shutil.copy2(src_elk, dst_elk)

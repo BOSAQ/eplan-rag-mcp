@@ -64,6 +64,33 @@ For long-lived clients (e.g. a WPF app holding an `EplanRemoteClient`), implemen
 
 ## 4. Error handling rules
 
+**The commonest way to lose an error is to call an action the default way.**
+`new CommandLineInterpreter()` does not transmit exceptions to the caller, so
+a failed action gives you a bare `false`. Two things recover the cause:
+
+```csharp
+// ✅ Read the exception off the context - works on both executor paths,
+//    no re-execution, no flags:
+bool ok = new ActionManager().FindAction("projectmanagement").Execute(acc);
+var ex = acc.GetException();      // the BaseException behind the false
+// acc.SysMessages also carries this call's messages, with severity.
+
+// ✅ Or ask the interpreter to transmit them (two other ctors exist):
+new CommandLineInterpreter(true).Execute("someAction", acc);        // throws
+new CommandLineInterpreter(true, true).Execute("someAction", acc);  // + acc.SysMessages
+```
+
+**Never re-run an action to harvest its message.** `false` does not mean
+nothing happened — a `restore` returned false *after* completing an overwrite
+that deleted unrelated files. Use the context you already have.
+
+And know the limit: `GetException()` returns **null** for precondition
+failures, which are silent on every channel. `SetProjectLanguage` with no
+project open returns false with a null exception, empty `SysMessages`, and
+nothing in the tree at any severity — and a *valid* language id fails
+identically. When the exception is null, suspect a missing precondition, not
+your parameters. (Measured on EPLAN 2027.0.1, 2026-09-03.)
+
 ```csharp
 // ❌ NEVER
 try { ... } catch { }

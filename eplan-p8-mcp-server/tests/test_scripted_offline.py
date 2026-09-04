@@ -300,6 +300,10 @@ def test_timeout_reports_eplan_compile_errors(fake_eplan, monkeypatch):
 
 
 def test_genuine_timeout_says_no_compile_error(fake_eplan, monkeypatch):
+    """With the cause unconfirmed, `message` stays the verbatim string
+    upstream (#28) preserves for callers matching on it, and the reasoning
+    goes in `error`. `message` only stops saying "timeout" once the compiler
+    has actually been confirmed as the cause - see the test above."""
     monkeypatch.setattr(
         scripted, "get_system_messages",
         lambda min_level="Warning", max_messages=100: {"success": True, "messages": []},
@@ -307,7 +311,9 @@ def test_genuine_timeout_says_no_compile_error(fake_eplan, monkeypatch):
     result = scripted._execute_script("// compiles but hangs", timeout=0.2)
 
     assert result["success"] is False
-    assert "no compile error" in result["message"]
+    assert result["message"] == "Timeout waiting for script results"
+    assert result["errorType"] == "McpScriptNoResult"
+    assert "no compile error" in result["error"]
     assert "compile_errors" not in result
 
 
