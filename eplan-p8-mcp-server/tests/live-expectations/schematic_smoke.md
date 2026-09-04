@@ -207,3 +207,72 @@ actually needs is placement-driven: put the devices where their pins meet.
 
 Recorded rather than patched, because the fix is a design change to the wiring
 layer and not a bug in these two tools.
+
+
+---
+
+# How EPLAN actually wires a schematic
+
+**Measured** 2026-09-03 across 30 pages of a production project. This supersedes
+every earlier guess in this file about connections, including two of mine.
+
+## Nothing draws a wire. Everything is a placed symbol.
+
+| Need | Mechanism | Object | Seen in 30 pages |
+|---|---|---|---|
+| Straight run between aligned pins | autoconnecting line - implicit | **none** | - |
+| Corner / turn | place a `CO` symbol (v0-v3 = 4 orientations) | SymbolReference | 2241 total |
+| T-node / branch | place `TLRO` / `TLRU` | SymbolReference | (included above) |
+| Wire number, colour, cross-section | `CDPNG` / `CDPNG2` on the connection | ConnectionDefinitionPoint | 1033 |
+| Cross-page jump | `BP`, paired by name (A, B, C...) | InterruptionPoint | 156 |
+| Diagonal / free routing | `DynamicConnectionLine` | rare | **18, all on ONE page** |
+
+All from `SPECIAL_en_US` / `Symbol Library - Special`.
+
+## The autoconnecting line is not an object
+
+A page built with four devices and no lines at all:
+
+```
+placements: 4 (all Function)   line objects: 0
+rendered:   two vertical lines between the vertically-aligned pairs
+connections after generation:
+    +-K1[2] (60.325, 241.3) -> +-K3[1] (60.325, 180.975)
+    +-K2[2] (139.7, 241.3)  -> +-K4[1] (139.7, 139.7)
+```
+
+EPLAN renders the line between connection points that FACE EACH OTHER on a
+shared axis, and generation turns it into an `IndividualConnection`. There is
+nothing on the page to create, address or delete.
+
+## A corner is a symbol, not a drawn elbow
+
+`CO` has connection points on two perpendicular sides, so it autoconnects to
+whatever is aligned above/below and left/right of it. Turning a corner means
+PLACING `CO` at the turn - not drawing two segments. Its four variants are the
+four orientations.
+
+## Why the first attempt failed
+
+`live_connect_pins` drew a `DynamicConnectionLine` between two pins for an
+ordinary straight run. That primitive is real but rare - 18 instances in 30
+pages, all on one detail page, used for genuine diagonals. Using it for a
+straight run produced a line that was geometrically exact, visible on the page,
+and connected to nothing, because the connection comes from ALIGNMENT and not
+from the line.
+
+The correct primitive set is placement-driven:
+
+  place a device so its pin faces an existing pin  -> straight run
+  place `CO` at a turn                             -> corner
+  place `TLRO`/`TLRU`                              -> branch
+  place `CDPNG` on a connection                    -> wire properties
+  place `BP` pairs                                 -> cross-page
+  `DynamicConnectionLine`                          -> diagonals only
+
+## Note for the convention profile
+
+Learning from a go-by ranked `Symbol Library - Special / CO` top with 175
+observations. That is not a device - it is the corner symbol, and it is the most
+common thing on a schematic page. A profile that treats it as device vocabulary
+is mis-reading the page; connection symbols should be classified separately.
