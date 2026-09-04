@@ -11,6 +11,63 @@ CommandLineInterpreter oCLI = new CommandLineInterpreter();
 oCLI.Execute("gedRedraw");
 ```
 
+## First: how to find out WHY an action failed
+
+`Execute` returns a bool. That bool is almost never enough, and the default
+way of calling an action throws the reason away — so read this before the
+catalog below.
+
+**`CommandLineInterpreter` has three constructors, and the parameterless one
+discards exceptions.**
+
+```csharp
+new CommandLineInterpreter()                    // exceptions NOT transmitted to the caller
+new CommandLineInterpreter(true)                // raised exceptions ARE transmitted
+new CommandLineInterpreter(true, true)          // ...and system messages collected into acc.SysMessages
+```
+
+**But you usually don't need the flags — read the exception off the context.**
+`ActionCallingContext.GetException()` returns the `BaseException` behind a
+failed action, on both executor paths, with no re-execution:
+
+```csharp
+var acc = new ActionCallingContext();
+acc.AddParameter("TYPE", "READPROJECTINFO");
+
+var action = new ActionManager().FindAction("projectmanagement");
+bool ok = action.Execute(acc);          // returns false
+
+var ex = acc.GetException();            // "No file found. (Parameter 'FILENAME')"
+if (ex != null) { /* the real cause, as a BaseException */ }
+
+foreach-able: acc.SysMessages           // per-call collection, with severity
+```
+
+Measured on EPLAN 2027.0.1 (2026-09-03): after `Action.Execute` of
+`projectmanagement /TYPE:READPROJECTINFO` with `PROJECTNAME` omitted,
+`GetException()` returns EPLAN's own text and `acc.SysMessages.Count` is 1
+carrying `Error` severity. `acc.SysMessages` is populated on the
+`Action.Execute` path **without** the `bCollectSysMessages` flag, which the
+docs do not mention.
+
+**Never re-run an action to harvest its error message.** `success:false` does
+not mean nothing happened — a `restore` returned false *after* completing an
+overwrite that deleted unrelated files. Read the exception off the context you
+already have.
+
+### The honest limit
+
+`GetException()` returns **null** for some failures, and those are silent on
+every channel. Measured: `SetProjectLanguage /DISPLAY:...` with no project
+open returns false with `GetException()` null, `acc.SysMessages` empty, and
+nothing in the system message tree at any severity — and a *valid* language id
+fails identically, so the parameter was never the problem. It is a missing
+precondition that EPLAN declines to report.
+
+So `GetException()` is the first thing to check, not a guarantee. When it is
+null, suspect a precondition (no project open, nothing selected, a
+write-protected database) rather than assuming your parameters were wrong.
+
 ## With parameters (`ActionCallingContext`)
 
 ```csharp
