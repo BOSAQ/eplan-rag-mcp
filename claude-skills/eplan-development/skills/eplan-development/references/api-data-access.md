@@ -79,6 +79,77 @@ for (int i = 1; i <= 20; i++)
 }
 ```
 
+## Writing part properties (and creating/removing parts)
+
+Writes go through the same property list and take effect **immediately** —
+there is no save, commit or `Store()` step. Verified live on EPLAN 2026.
+
+```csharp
+MDPartsManagement pm = new MDPartsManagement();
+using (MDPartsDatabase db = pm.OpenDatabase())
+{
+    MDPart part = db.AddPart("ZZ-TEST-001");        // throws if it exists
+
+    // Assign through the property-id indexer, or the typed member.
+    part.Properties[Eplan.EplApi.MasterData.Properties.MDPartsDatabaseItem.ARTICLE_MANUFACTURER]
+        = "BOSAQ";
+    part.Properties[Eplan.EplApi.MasterData.Properties.MDPartsDatabaseItem.ARTICLE_DESCR1]
+        = "Circuit breaker";                        // MultiLangString-valued
+
+    db.RemovePart(part);                            // permanent, no undo
+}
+```
+
+`ARTICLE_DESCR1` and friends are multilanguage: a plain string is stored as
+`??_??@Circuit breaker;` (no language assigned). Build a `MultiLangString`
+if the language matters — see core-classes.md.
+
+### `new MDPropertyValue("x")` does not exist
+
+`MDPropertyValue` has **only a default constructor** — `CS1729: does not
+contain a constructor that takes 1 arguments`. The string → `MDPropertyValue`
+conversion that makes the assignment above work is compile-time only. To
+build one, default-construct and `Set` it:
+
+```csharp
+var pv = new MDPropertyValue();
+pv.Set("BOSAQ");            // Set(String) / Set(Double) / Set(Boolean) / ...
+```
+
+### Reaching a property by name at runtime: mind the ambiguity
+
+Every `ARTICLE_*` member is declared **twice** on
+`MDPartsDatabaseItemPropertyList` — once parameterless, once taking an `int`
+index (for multi-value properties like `ARTICLE_CUSTOM_DATA_VALUE(i)`). So
+the obvious reflection call throws `AmbiguousMatchException: Ambiguous match
+found.` for *every* property, and `BindingFlags.DeclaredOnly` does not help
+(both overloads are declared on the same type):
+
+```csharp
+// WRONG - always throws
+var pi = part.Properties.GetType().GetProperty(name);
+
+// RIGHT - pin the empty index-parameter list to select the plain overload
+var pi = part.Properties.GetType().GetProperty(
+    name,
+    BindingFlags.Public | BindingFlags.Instance,
+    null, null, Type.EmptyTypes, null);
+
+var value = pi.GetValue(part.Properties, null);     // an MDPropertyValue
+
+var pv = new MDPropertyValue();
+pv.Set("BOSAQ");
+pi.SetValue(part.Properties, pv, null);             // NOT a bare string:
+                                                    // ArgumentException
+```
+
+Also note which names live where: `PartNr`, `Variant`, `ProductGroup`,
+`ProductSubGroup` and `ProductTopGroup` are members of **`MDPart`**, while
+descriptions, manufacturer, order number etc. are `ARTICLE_*` entries on
+`MDPart.Properties`. A name-based lookup has to try both objects. There is no
+`Description1` or `Manufacturer` on either — those are `ARTICLE_DESCR1` and
+`ARTICLE_MANUFACTURER`.
+
 ## User-defined properties on parts
 
 User-defined properties live on the part as `UserDefinedPropertyPositions`; each position has `IdentifyingName` (e.g. `"MLX.P025"`) and `Value` (multilang string):

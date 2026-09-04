@@ -163,6 +163,94 @@ where this was mistaken for a RAM problem and then a project-size problem
 across 5 attempts before the real cause (an invalid `using`) turned up in the
 message tree.
 
+### Which C# the engine accepts depends on the version
+ on **2026** the script engine
+compiles with a **pre-C# 6** compiler, verified by probe — `?.` gives
+`CS1525`, and `new Dictionary<string, object> { ["a"] = 1 }` gives
+`CS1525: Invalid expression term '['`. On **2027** a direct probe compiled
+and ran that same dictionary index initializer. So the engine's C# level
+moved somewhere between the two, and neither "it's C# 5" nor "modern C#
+works" is safe to assume across versions.
+
+Treat the table below as the **2026 (and earlier) floor**. Write to it when
+a script has to run on a mixed fleet; probe first if you want to rely on
+anything newer. A one-line probe settles it in seconds — a script that
+compiles writes its result file, one that doesn't leaves a `CS####` in the
+message tree.
+
+These are all syntax errors on 2026, however normal they look:
+
+| Feature | C# | Symptom | Write instead |
+|---|---|---|---|
+| `?.` `?[]` null-conditional | 6 | `CS1525: Invalid expression term '.'` + `CS1003: Syntax error, ':' expected` | explicit null check, or `Convert.ToString(x)` (yields `""` for null) |
+| `$"text {x}"` interpolation | 6 | `CS1056` / parse errors | `string.Format(...)` or `+` |
+| `new Dictionary<..> { ["k"] = v }` index initializer | 6 | parse errors at the `[` | construct, then `d["k"] = v;` |
+| `nameof(x)` | 6 | `CS0103` | the literal string |
+| expression-bodied members, auto-property initializers, `??=` | 6+ | parse errors | classic bodies |
+
+**Why this is worse than a normal compile error:** the failure is invisible
+to the caller. `ExecuteScript` still returns **success** in ~0.4 s, the
+script never runs, and if your script's contract is "write a result file",
+the only symptom is that the file never appears. Drive a script from an
+external process with a wait-for-result loop and you get a *timeout* — so
+you go debugging the connection, a modal dialog, or a "blocked" EPLAN,
+while the actual `CS####` message sits in EPLAN's system-message tree.
+Field-confirmed on EPLAN 2026: four separate parts-database functions were
+written off as "EPLAN hangs on parts queries" for months; all four were
+`?.` and one dictionary index initializer.
+
+**So: on any script timeout, read the message tree first.**
+
+```csharp
+var col = new SysMessagesCollection(0, MessageLevel.Error);
+var it = col.GetSysMsgEnumerator();
+while (it.MoveNext())
+{
+    var m = it.Current as BaseException;   // .MessageLevel, not .Level (CS1061)
+    if (m != null) Console.WriteLine(m.Message);
+}
+```
+
+EPLAN brackets each failed compile with a `Compile errors ... in the script
+<path>:` header and a `<path> cannot be compiled` footer, with the `CS####`
+lines between them — and the generated file name is in both, so you can pick
+out the messages belonging to one script. In this repo,
+`_execute_script` in `scripted.py` does exactly that and reports
+`compile_errors` instead of a bare timeout.
+
+### A compile error is not the only silent timeout
+
+Same symptom — no result file, caller reports a timeout — different cause.
+Check these before assuming syntax:
+
+- **A wrong member name is `CS1061`, i.e. still a compile error.** The trap
+  is that the name looks right. `MDPart` has **no `ProductTopGroup`** member:
+  that is the name of the enum *type*, and the property holding it is
+  `GenericProductGroup`. Reflect over the type and read the real names rather
+  than trusting a plausible one.
+- **Leaving live EPLAN objects in what you serialize will hang the script.**
+  An `MDPropertyValue` stored straight into the dictionary that
+  `JsonConvert.SerializeObject` walks sends the serializer off through a
+  native object graph, and the script never finishes. This one compiles
+  fine — it is a genuine hang, not a compile error, so the message tree is
+  empty. Flatten every value to a string/number *before* it goes in.
+- **A runtime exception inside `[Start]`** — see the last note below.
+
+Distinguishing them: if the message tree has a `CS####` for your script, it
+is a compile error. If the tree is clean and the script still produced
+nothing, suspect the serializer or an unhandled exception.
+
+Two related notes:
+
+- EPLAN pre-imports `System`, `System.Linq`, `Eplan.EplApi.Base`,
+  `Eplan.EplApi.MasterData` and `Eplan.EplApi.Scripting`, so repeating those
+  `using` directives logs `CS0105 (…appeared previously in this namespace)`.
+  Harmless — the script still compiles — but it is noise in the tree, and it
+  can distract from the one line that actually matters.
+- A *runtime* exception inside `[Start]` is a different failure with the same
+  outward symptom (no result file). Wrap the body in try/catch and write the
+  exception into the result file, so the two cases stay distinguishable.
+
 ## 10. Don't `RegisterScript` a one-shot `[Start]` script
 
 `RegisterScript` installs a script's *persistent* hooks (`[DeclareAction]`/
