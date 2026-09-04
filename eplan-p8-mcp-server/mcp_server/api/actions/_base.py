@@ -90,3 +90,115 @@ def _execute_with_quiet_mode(action: str) -> dict:
     if error:
         return error
     return manager.execute_action(action, quiet_mode=True)
+
+
+# ---------------------------------------------------------------------------
+# Reporting what an export actually wrote
+# ---------------------------------------------------------------------------
+#
+# EPLAN's export actions take a filename but do not promise to use it: the
+# active export scheme's own output settings decide the basename, and the
+# action still returns success. A wrapper that echoes back the requested
+# EXPORTFILE therefore reports a file that is not on disk, and a caller that
+# reads it back gets FileNotFoundError with nothing pointing at the real name.
+#
+# So instead of trusting the request, snapshot the target directory and diff
+# it. The snapshot carries mtime and size, not just names, because an export
+# that OVERWRITES a file from an earlier run changes no name at all - a
+# name-only diff would report that nothing was written.
+
+
+def _snapshot_dir(directory: str) -> Optional[dict]:
+    """
+    {normcased name: (real name, mtime_ns, size)} for the files in *directory*.
+
+    Returns None if the directory cannot be listed - it does not exist yet, it
+    is on a share this process cannot read, or EPLAN is on another machine.
+    That is reported to the caller as unavailable verification, never as
+    "nothing was written".
+    """
+    snapshot = {}
+    try:
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                try:
+                    if not entry.is_file():
+                        continue
+                    stat = entry.stat()
+                except OSError:
+                    # Vanished or unreadable mid-scan; absent from the snapshot
+                    # means a later scan can only report it as changed, which
+                    # is the safe direction.
+                    continue
+                snapshot[os.path.normcase(entry.name)] = (
+                    entry.name, stat.st_mtime_ns, stat.st_size
+                )
+    except OSError:
+        return None
+    return snapshot
+
+
+def _report_written_files(result: dict, export_file: str,
+                          directory: str, before: Optional[dict]) -> dict:
+    """Add requestedFile/writtenFiles/requestedFileWritten to *result*."""
+    result = dict(result)
+    requested = os.path.abspath(export_file)
+    result["requestedFile"] = requested
+
+    after = _snapshot_dir(directory)
+    if before is None or after is None:
+        result["verification"] = (
+            "unavailable: could not list %s, so what EPLAN wrote there is "
+            "unknown. The export itself may well have succeeded - check the "
+            "directory yourself rather than trusting requestedFile."
+            % directory
+        )
+        return result
+
+    changed = sorted(
+        after[key][0] for key in after
+        if before.get(key, (None, None, None))[1:] != after[key][1:]
+    )
+    result["writtenFiles"] = [os.path.join(directory, name) for name in changed]
+
+    requested_name = os.path.normcase(os.path.basename(requested))
+    result["requestedFileWritten"] = requested_name in after and (
+        before.get(requested_name, (None, None, None))[1:]
+        != after[requested_name][1:]
+    )
+
+    if not result["requestedFileWritten"]:
+        if changed:
+            result["note"] = (
+                "EPLAN did not write the requested basename. The output "
+                "filename is decided by the export scheme, not by "
+                "export_file; pass an explicit export_scheme when the name "
+                "matters. writtenFiles is what actually changed in the "
+                "target directory."
+            )
+        else:
+            result["note"] = (
+                "The action reported success but nothing in the target "
+                "directory changed. Either the scheme wrote somewhere else "
+                "entirely, or the export produced no file - do not treat "
+                "requestedFile as existing."
+            )
+    return result
+
+
+def _execute_and_report_written(action: str, export_file: str) -> dict:
+    """
+    Run *action* under QuietMode, then say which files it really wrote.
+
+    Existing fields of the action result are passed through untouched, so
+    anything matching on success/parameters keeps working. success is
+    deliberately NOT flipped when the requested basename is missing: the
+    export did happen, and calling it a failure would be its own lie. The
+    truth is in requestedFileWritten and writtenFiles.
+    """
+    directory = os.path.dirname(os.path.abspath(export_file))
+    before = _snapshot_dir(directory)
+    result = _execute_with_quiet_mode(action)
+    if not isinstance(result, dict) or not result.get("success"):
+        return result
+    return _report_written_files(result, export_file, directory, before)
