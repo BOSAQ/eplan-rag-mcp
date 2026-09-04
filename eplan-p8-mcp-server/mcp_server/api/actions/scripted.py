@@ -5,6 +5,23 @@ These actions access internal EPLAN APIs that aren't available via standard acti
 - MDPartsManagement: Direct parts database access
 - Settings: Typed settings (string, bool, int) with direct API
 - PathMap: Variable substitution
+
+EVERY generated script here must be valid **C# 5**. On EPLAN 2026 the script
+engine compiles with a pre-C# 6 compiler - probed directly: `?.` gives
+CS1525, and a dictionary index initializer gives "CS1525: Invalid expression
+term '['". 2027's engine is newer and accepts the initializer (see
+live.py's header, corrected in 0099e8e1e), but these tools target both, so
+write to the older floor:
+    ?.  ?[]   null-conditional         -> Convert.ToString(x), or a null check
+    $"..."      string interpolation   -> string.Format / concatenation
+    dictionary index initializers      -> assign after construction
+    nameof(x), expression-bodied members, auto-property initializers
+
+A compile error is invisible from here: ExecuteScript still reports success,
+the script never runs, and the only symptom is that the result file never
+appears - i.e. it looks exactly like a hung EPLAN. `_execute_script` reads
+EPLAN's message tree on timeout and reports the real CS#### error; see
+`_compile_errors_for`.
 """
 
 import os
@@ -50,6 +67,70 @@ def _ensure_dirs():
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
 
+# Friendly names mapped to the real parts-DB property, for the WRITE path.
+# Reads resolve these inside the generated C# (upstream's FriendlyToArticle);
+# create/update have no such helper, so they resolve here. Kept in step with
+# that map, plus a few extra spellings. Anything unlisted passes through, so
+# raw ARTICLE_* names keep working.
+_PARTS_PROP_ALIASES = {
+    "Description1": "ARTICLE_DESCR1",
+    "Description2": "ARTICLE_DESCR2",
+    "Description3": "ARTICLE_DESCR3",
+    "Descr1": "ARTICLE_DESCR1",
+    "Manufacturer": "ARTICLE_MANUFACTURER",
+    "ManufacturerName": "ARTICLE_MANUFACTURER_NAME",
+    "Supplier": "ARTICLE_SUPPLIER",
+    "OrderNr": "ARTICLE_ORDERNR",
+    "TypeNr": "ARTICLE_TYPENR",
+    "PartNumber": "ARTICLE_PARTNR",
+    "ERPNr": "ARTICLE_ERPNR",
+}
+
+
+def _resolve_prop_name(name: str) -> str:
+    """Map a friendly property name to its parts-DB name; pass others through."""
+    return _PARTS_PROP_ALIASES.get(name, name)
+
+
+# C# 5 write helper for the parts property list, injected into the create and
+# update scripts. Mirrors upstream's FindUnambiguous for the lookup, and adds
+# the part upstream's write path is missing: the setter takes an
+# MDPropertyValue, and MDPropertyValue has ONLY a default constructor - the
+# string -> MDPropertyValue conversion that works in source is compile-time
+# only, invisible to SetValue, which throws ArgumentException on a bare
+# string. Braces are single: this is interpolated, not re-scanned.
+_PARTS_WRITE_HELPER_CS = """
+    static PropertyInfo FindWritable(Type t, string name)
+    {
+        BindingFlags bf = BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+        Type cur = t;
+        while (cur != null)
+        {
+            PropertyInfo pi = null;
+            // Every ARTICLE_* member is declared twice - once parameterless,
+            // once taking an int index - so a bare GetProperty(name) throws
+            // AmbiguousMatchException for all of them. Type.EmptyTypes pins
+            // the non-indexed overload.
+            try { pi = cur.GetProperty(name, bf, null, null, Type.EmptyTypes, null); } catch { }
+            if (pi != null && pi.CanWrite) return pi;
+            cur = cur.BaseType;
+        }
+        return null;
+    }
+
+    // Returns null on success, else why it failed.
+    static string WriteProp(object propList, string name, string value)
+    {
+        PropertyInfo pi = FindWritable(propList.GetType(), name);
+        if (pi == null) return "no writable property '" + name + "' on the property list";
+        var pv = new MDPropertyValue();
+        pv.Set(value);
+        pi.SetValue(propList, pv, null);
+        return null;
+    }
+"""
+
+
 def _preserve_failed_script(script_path: str):
     """Copy a generated script aside so a compile failure stays diagnosable.
 
@@ -69,6 +150,49 @@ def _preserve_failed_script(script_path: str):
         return dest
     except Exception:
         return None
+
+
+# Reading EPLAN's message tree to explain a timeout itself runs a script.
+# This flag keeps that diagnostic from recursing if IT times out too.
+_collecting_diagnostics = False
+
+
+def _compile_errors_for(script_path: str) -> list:
+    """
+    Ask EPLAN why a script produced no result file.
+
+    EPLAN's script engine reports compile failures only to its own
+    system-message tree: the remote ExecuteScript call still returns success
+    in well under a second, the script never runs, and the sole symptom here
+    is the result file never appearing. So on timeout, go read the tree.
+
+    Returns the messages EPLAN logged against this script file (its
+    "compile errors in <file>:" header, the CS#### lines, and the
+    "<file> cannot be compiled" footer), oldest first - or [] if EPLAN
+    logged none, which means a genuine timeout: the script compiled and is
+    still running, or it died without writing its result.
+    """
+    global _collecting_diagnostics
+    if _collecting_diagnostics:
+        return []
+    _collecting_diagnostics = True
+    try:
+        res = get_system_messages(min_level="Error", max_messages=200)
+        if not res.get("success"):
+            return []
+        # The generated file name carries a per-execution uuid, so matching on
+        # it cannot pick up messages from an earlier script.
+        basename = os.path.basename(script_path)
+        texts = [m.get("text", "") for m in res.get("messages") or []]
+        marked = [i for i, t in enumerate(texts) if basename in t]
+        if not marked:
+            return []
+        return texts[marked[0]:marked[-1] + 1]
+    except Exception:
+        # A diagnostic must never turn a timeout into a different failure.
+        return []
+    finally:
+        _collecting_diagnostics = False
 
 
 def _execute_script(script_content: str, timeout: float = 30.0) -> dict:
@@ -138,7 +262,19 @@ def _execute_script(script_content: str, timeout: float = 30.0) -> dict:
                 # retry - which cannot help when the cause is that the C# did
                 # not compile. Named explicitly, and the script is preserved,
                 # because it is the only evidence of a compile error.
+                # Two halves of the same diagnosis, kept together.
+                #
+                # Upstream (#28): name the failure so a caller does not read
+                # it as a slow-but-fine script and retry, and copy the
+                # generated script aside - the `finally` below deletes the
+                # only evidence a compile error ever existed.
+                #
+                # Ours: rather than telling the caller to go check
+                # eplan_get_system_messages, read it here and return the
+                # CS#### lines inline.
                 preserved = _preserve_failed_script(script_path)
+                compile_errors = _compile_errors_for(script_path)
+
                 result = {
                     "success": False,
                     "errorType": "McpScriptNoResult",
@@ -147,12 +283,44 @@ def _execute_script(script_content: str, timeout: float = 30.0) -> dict:
                         "within %gs. EPLAN's ExecuteScript is synchronous "
                         "here, so a merely slow script would still have "
                         "written its result before returning - this usually "
-                        "means the C# failed to compile. Check "
-                        "eplan_get_system_messages for a compiler error."
+                        "means the C# failed to compile."
                         % timeout
                     ),
+                    # Kept verbatim while the cause is still unconfirmed, so
+                    # anything matching on this string keeps working.
                     "message": "Timeout waiting for script results",
                 }
+
+                if compile_errors:
+                    cs_lines = [e for e in compile_errors if e.startswith("CS")]
+                    # CS0105 is "using directive appeared previously": EPLAN
+                    # pre-imports the namespaces every generated script also
+                    # declares, so it fires on almost every script and is
+                    # never the reason one failed. Keep it in compile_errors,
+                    # but don't let it crowd out the real error.
+                    summary = " | ".join(
+                        [e for e in cs_lines if not e.startswith("CS0105")]
+                        or cs_lines
+                        or compile_errors
+                    )
+                    # Once the compiler is confirmed as the cause, `message`
+                    # stops saying "timeout". It is the first thing a reader
+                    # sees, and leaving it blaming a timeout EPLAN never had
+                    # is precisely what sent this class of bug to the wrong
+                    # place - the connection, a modal dialog, EPLAN itself.
+                    result["message"] = "Script did not compile: " + summary
+                    result["error"] = (
+                        "The script did NOT run: it failed to compile. "
+                        "EPLAN reported: " + summary
+                    )
+                    result["compile_errors"] = compile_errors
+                else:
+                    result["error"] += (
+                        " EPLAN logged no compile error for this script, so it"
+                        " did compile, and either is still running or died"
+                        " without writing its result."
+                    )
+
                 if preserved:
                     result["failedScriptPath"] = preserved
                 return result
@@ -265,7 +433,7 @@ def parts_db_query(
         if not _CS_IDENTIFIER.match(filter_property):
             return _identifier_error(filter_property, "filter_property")
         filter_code = f'''
-            .Where(p => p.{filter_property}?.ToString()?.Contains("{cs_escape(filter_value)}") == true)'''
+                    .Where(p => Convert.ToString(p.{filter_property}).Contains("{cs_escape(filter_value)}"))'''
 
     script = f"""using System;
 using System.IO;
@@ -427,7 +595,7 @@ def parts_db_count(filter_property: str = None, filter_value: str = None) -> dic
     if filter_property and filter_value:
         if not _CS_IDENTIFIER.match(filter_property):
             return _identifier_error(filter_property, "filter_property")
-        filter_code = f'.Where(p => p.{filter_property}?.ToString()?.Contains("{cs_escape(filter_value)}") == true)'
+        filter_code = f'.Where(p => Convert.ToString(p.{filter_property}).Contains("{cs_escape(filter_value)}"))'
 
     script = f"""using System;
 using System.IO;
@@ -602,19 +770,21 @@ def parts_db_create(part_number: str, properties: dict = None) -> dict:
     # cs_escape'd) and are applied at runtime via reflection with a single
     # loop variable - never minted into C# identifiers, so an arbitrary
     # property name cannot break or inject into the script.
-    items = list((properties or {}).items())
+    items = [(_resolve_prop_name(n), v) for n, v in (properties or {}).items()]
     names_array = ", ".join(f'"{cs_escape(name)}"' for name, _ in items)
     values_array = ", ".join(f'"{cs_escape(value)}"' for _, value in items)
 
     script = f'''using System;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Collections.Generic;
 using Eplan.EplApi.MasterData;
 using Eplan.EplApi.Scripting;
 
 public class PartsCreate_{uuid.uuid4().hex[:6]}
 {{
+{_PARTS_WRITE_HELPER_CS}
     [Start]
     public void Run()
     {{
@@ -642,18 +812,23 @@ public class PartsCreate_{uuid.uuid4().hex[:6]}
                     {{
                         try
                         {{
-                            var prop = part.Properties.GetType().GetProperty(propNames[i]);
-                            if (prop != null)
+                            string why = WriteProp(part.Properties, propNames[i], propValues[i]);
+                            if (why == null)
                             {{
-                                prop.SetValue(part.Properties, propValues[i]);
                                 setProps.Add(propNames[i]);
                             }}
                             else
                             {{
-                                failedProps.Add(propNames[i]);
+                                failedProps.Add(propNames[i] + ": " + why);
                             }}
                         }}
-                        catch {{ failedProps.Add(propNames[i]); }}
+                        catch (Exception ep)
+                        {{
+                            // Say WHY, like the read path does. A bare name in
+                            // propertiesFailed is how every property silently
+                            // failing still looked like a partial success.
+                            failedProps.Add(propNames[i] + ": " + ep.Message);
+                        }}
                     }}
                     results["success"] = true;
                     results["created"] = "{part_number_cs}";
@@ -689,17 +864,19 @@ def parts_db_update(part_number: str, property_name: str, property_value: str) -
         dict with success status
     """
     part_number_cs = cs_escape(part_number)
-    property_name_cs = cs_escape(property_name)
+    property_name_cs = cs_escape(_resolve_prop_name(property_name))
     property_value_cs = cs_escape(property_value)
     script = f'''using System;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Collections.Generic;
 using Eplan.EplApi.MasterData;
 using Eplan.EplApi.Scripting;
 
 public class PartsUpdate_{uuid.uuid4().hex[:6]}
 {{
+{_PARTS_WRITE_HELPER_CS}
     [Start]
     public void Run()
     {{
@@ -714,17 +891,21 @@ public class PartsUpdate_{uuid.uuid4().hex[:6]}
 
                 if (part != null)
                 {{
-                    var prop = part.Properties.GetType().GetProperty("{property_name_cs}");
-                    if (prop != null)
+                    string why = WriteProp(part.Properties, "{property_name_cs}", "{property_value_cs}");
+                    if (why == null)
                     {{
-                        prop.SetValue(part.Properties, "{property_value_cs}");
+                        // Read it straight back, so a caller never has to
+                        // trust that the write landed.
+                        PropertyInfo back = FindWritable(part.Properties.GetType(), "{property_name_cs}");
+                        object v = back == null ? null : back.GetValue(part.Properties, null);
                         results["success"] = true;
                         results["updated"] = true;
+                        results["value"] = v == null ? "" : v.ToString();
                     }}
                     else
                     {{
                         results["success"] = false;
-                        results["error"] = "Property not found: {property_name_cs}";
+                        results["error"] = "{property_name_cs}: " + why;
                     }}
                 }}
                 else
