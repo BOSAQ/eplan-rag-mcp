@@ -10,7 +10,7 @@ __pycache__/
 # Configuration & Secrets
 .env
 .env.*
-! .env.example
+!.env.example
 
 # IDEs
 .vscode/
@@ -65,3 +65,9 @@ cloudflare-rag-eecpro/migration/data/
 # Generated EPLAN scripts and their result files (runtime artifacts)
 eplan-p8-mcp-server/mcp_server/scripts/generated/*.cs
 eplan-p8-mcp-server/mcp_server/scripts/results/*.json
+
+# Local investigation notes: these hold live measurements from a real
+# workstation (customer project paths, usernames, private add-in names) and
+# must never be committed. Publish findings through an issue instead.
+ISSUE_*_PLAN.md
+**/ISSUE_*_PLAN.md

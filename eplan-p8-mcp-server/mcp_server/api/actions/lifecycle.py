@@ -24,7 +24,7 @@ import os
 import subprocess
 import time
 
-from ._base import _get_connected_manager
+from ._base import _get_connected_manager, _quote_param
 from eplan_connection import (
     get_manager,
     detect_installed_versions,
@@ -101,7 +101,7 @@ def app_launch(version: str = None, variant: str = None, headless: bool = False,
                 "error": "Already connected to a running EPLAN. Use app_restart "
                          "to recycle it, or app_shutdown first."}
 
-    args = [f'"{exe}"', f'/Variant:"{variant or DEFAULT_VARIANT}"', "/NoSplash"]
+    args = [f'"{exe}"', _quote_param("Variant", variant or DEFAULT_VARIANT), "/NoSplash"]
     if headless:
         # /Quiet (batch mode) only for headless runs: on a GUI launch it
         # blocks the workspace panels from restoring and fills the system
