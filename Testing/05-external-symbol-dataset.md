@@ -1,5 +1,10 @@
 # Cross-Referencing an External Symbol Dataset
 
+**Reusable tool:** `Testing/tools/lookup_symbol_dataset.py` — downloads the
+dataset once (cached, gitignored, never committed) and searches it by
+`--short-name`, `--number` or `--contains` a description substring. See its
+`--help` for the numeric-id caveat below (`number` is not globally unique).
+
 ## The dataset
 
 `covaga/electrical-symbols-dataset` on Hugging Face — 33,502 rows, one
