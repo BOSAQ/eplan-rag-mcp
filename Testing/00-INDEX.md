@@ -21,6 +21,7 @@ be re-verified the same way: place something, `live_read_page`/
 | [03-coordinate-system-and-designations.md](03-coordinate-system-and-designations.md) | Confirming `+Y = up` on the page from placed reference terminals. The full four-part device designation (`=function++installation+location-device`) vs. the bare device-tag suffix most calls default to. |
 | [04-interactive-vs-scripted-placement.md](04-interactive-vs-scripted-placement.md) | Two different ways to put a symbol on a page — the scripted `Function.Create` path (`live_place_symbol`) vs. the native GUI action `XEGActionInsertSymRef` (F3-equivalent) — their trade-offs, and a real device-drift bug caught by re-reading the page after a hang. |
 | [05-external-symbol-dataset.md](05-external-symbol-dataset.md) | Cross-referencing a public HuggingFace symbol-description dataset against this project's live `IEC_symbol` library — where it helped, where it didn't, and what it confirmed. |
+| [06-macrobox-reflection.md](06-macrobox-reflection.md) | A third placement kind the six primitives don't cover: `MacroBox`, invisible to `live_read_page`'s `Name` field. Found and verified `MacroBox.MacroName` by raw reflection, confirmed a write on an empty box, and flagged what that test does *not* prove for a populated one. |
 
 ## Ground rules this session actually followed
 
