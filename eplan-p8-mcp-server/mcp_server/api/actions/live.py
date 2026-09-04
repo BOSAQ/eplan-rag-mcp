@@ -472,6 +472,27 @@ _HELPERS = '''
         return d;
     }
 
+    // Stringify anything EPLAN hands back, safely.
+    //
+    // Load-bearing, and NOT obvious: reading an EPLAN property succeeds and
+    // returns a PropertyValue, but calling ToString() on one whose property is
+    // EMPTY throws EmptyPropertyException - measured on 2027 while reading the
+    // connection-designation property of an ungenerated connection. So a
+    // try/catch around the READ is not enough; the conversion throws too, and
+    // separately from it.
+    //
+    // Anything that turns an EPLAN value into text must go through here.
+    static string SafeText(object value)
+    {
+        if (value == null) return null;
+        try
+        {
+            string s = value.ToString();
+            return s;
+        }
+        catch { return null; }   // an empty property is absence, not an error
+    }
+
     // Stable within one EPLAN session; NOT a database id that survives a
     // reopen. Callers get it back as "handle" and pass it to the next call.
     static string Handle(object o)

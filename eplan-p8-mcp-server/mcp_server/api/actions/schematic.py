@@ -101,6 +101,7 @@ __all__ = [
     "live_remove_placement",
     "live_verify_page",
     "live_set_device_tag",
+    "live_read_connections",
 ]
 
 
@@ -221,7 +222,7 @@ _HELPERS_SCHEMATIC = r'''
         d["handle"] = Handle(pl);
 
         object nameVal = TryRead(pl, "Name", absent);
-        if (nameVal != null) d["name"] = nameVal.ToString();
+        if (nameVal != null) d["name"] = SafeText(nameVal);
 
         object loc = TryRead(pl, "Location", absent);
         if (loc != null) d["location"] = PtDict(loc);
@@ -251,8 +252,8 @@ _HELPERS_SCHEMATIC = r'''
             object lib = TryRead(variant, "SymbolLibraryName", null);
             object sname = TryRead(variant, "SymbolName", null);
             object vnr = TryRead(variant, "VariantNr", null);
-            if (lib != null) sym["library"] = lib.ToString();
-            if (sname != null) sym["name"] = sname.ToString();
+            if (lib != null) sym["library"] = SafeText(lib);
+            if (sname != null) sym["name"] = SafeText(sname);
             if (vnr != null) sym["variantNr"] = Convert.ToInt32(vnr);
             if (sym.Count > 0) d["symbol"] = sym;
         }
@@ -271,7 +272,7 @@ _HELPERS_SCHEMATIC = r'''
                     object pidx = TryRead(pin, "Index", null);
                     pd["index"] = pidx == null ? idx : Convert.ToInt32(pidx);
                     object des = TryRead(pin, "Designation", null);
-                    if (des != null) pd["designation"] = des.ToString();
+                    if (des != null) pd["designation"] = SafeText(des);
                     object ploc = TryRead(pin, "Location", null);
                     // RAW on purpose: whether this is absolute or an offset is
                     // decided on the Python side against the bounding box.
@@ -701,7 +702,7 @@ def live_symbol_catalog(library: str = None, symbol: str = None,
                             object pidx = TryRead(pin, "Index", null);
                             pd["index"] = pidx == null ? i : Convert.ToInt32(pidx);
                             object des = TryRead(pin, "Designation", null);
-                            if (des != null) pd["designation"] = des.ToString();
+                            if (des != null) pd["designation"] = SafeText(des);
                             object ploc = TryRead(pin, "Location", null);
                             if (ploc != null) pd["raw"] = PtDict(ploc);
                             pins.Add(pd);
@@ -1150,11 +1151,31 @@ def live_connect_pins(page: str, from_handle: str, from_pin: int,
                 new string[] { "PointD", "PointD" }, false);
             results["boundSignature"] = setG.ToString();
             Type ptType = setG.GetParameters()[0].ParameterType;
+
+            // SetGraphics takes coordinates RELATIVE to the line's Location,
+            // not absolute page coordinates. Measured on real, human-drawn lines
+            // in a production project: Location is the absolute anchor
+            // (326.39, 346.71) and GetGraphics() returns a Line whose points are
+            // (0,0) -> (-1.27, 2.54), with the connection points relative too.
+            //
+            // Passing absolute coordinates with Location left at its default put
+            // one end of the wire at the PAGE ORIGIN - a line that visibly
+            // exists, reports success, and connects nothing. So: anchor at the
+            // first pin, then draw the segment relative to it.
+            PropertyInfo locProp = GetWritable(dclType, "Location");
+            if (locProp == null)
+                throw new Exception("DynamicConnectionLine has no writable Location, " +
+                    "so the line cannot be anchored and SetGraphics would place it " +
+                    "relative to the page origin. " + MemberList(dclType, false));
+            locProp.SetValue(dcl, MakePoint(ptType, AX, AY), null);
+
             Call(setG, dcl, new object[] {
-                MakePoint(ptType, AX, AY), MakePoint(ptType, BX, BY) });
+                MakePoint(ptType, 0.0, 0.0),
+                MakePoint(ptType, BX - AX, BY - AY) });
 
             results["page"] = PropText(page, "Name");
             results["lineDrawn"] = true;
+            results["anchor"] = PtDict(MakePoint(ptType, AX, AY));
             results["handle"] = Handle(dcl);
             results["line"] = DumpPlacement(dcl, false);
             results["page_after"] = ReadPage(page, 200, true, null);
@@ -1601,5 +1622,210 @@ def live_set_device_tag(page: str, handle: str, tag: str,
                 "EPLAN stored the tag as %r rather than %r - project structure "
                 "settings reformat device tags. Use the stored name for later "
                 "name-addressed calls." % (stored, tag)
+            )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 9. Read the LOGICAL connections
+# ---------------------------------------------------------------------------
+
+_HELPERS_CONNECTIONS = r'''
+    // One end of a connection: which device, at which connection point.
+    //
+    // Read from the SymbolReference rather than the Pin, because the pin knows
+    // its index and designation but not what it belongs to. Both are reported:
+    // "device" is what an engineer names, "designation" is what the wire lands
+    // on, and a connection is only meaningful with both.
+    static Dictionary<string, object> ConnEnd(object conn, bool start)
+    {
+        Dictionary<string, object> d = new Dictionary<string, object>();
+        List<string> absent = new List<string>();
+
+        object sr = TryRead(conn, start ? "StartSymbolReference" : "EndSymbolReference", absent);
+        if (sr != null)
+        {
+            d["clrType"] = sr.GetType().Name;
+            d["handle"] = Handle(sr);
+            object nm = TryRead(sr, "Name", null);
+            if (nm != null) d["device"] = SafeText(nm);
+            object loc = TryRead(sr, "Location", null);
+            if (loc != null) d["location"] = PtDict(loc);
+        }
+
+        object pin = TryRead(conn, start ? "StartPin" : "EndPin", absent);
+        if (pin != null)
+        {
+            object des = TryRead(pin, "Designation", null);
+            if (des != null) d["designation"] = SafeText(des);
+            object idx = TryRead(pin, "Index", null);
+            if (idx != null) d["pinIndex"] = Convert.ToInt32(idx);
+        }
+
+        object idxProp = TryRead(conn, start ? "StartIndex" : "EndIndex", null);
+        if (idxProp != null) d["connIndex"] = Convert.ToInt32(idxProp);
+
+        if (absent.Count > 0) d["absentMembers"] = absent;
+        return d;
+    }
+
+    static Dictionary<string, object> DumpConnection(object conn)
+    {
+        Dictionary<string, object> d = new Dictionary<string, object>();
+        List<string> absent = new List<string>();
+
+        d["handle"] = Handle(conn);
+        d["clrType"] = conn.GetType().Name;
+
+        object pg = TryRead(conn, "Page", absent);
+        if (pg != null) d["page"] = PropText(pg, "Name");
+
+        object kind = TryRead(conn, "KindOfWire", null);
+        if (kind != null) d["kindOfWire"] = SafeText(kind);
+
+        object placed = TryRead(conn, "IsPlaced", null);
+        if (placed != null) d["isPlaced"] = Convert.ToBoolean(placed);
+
+        d["from"] = ConnEnd(conn, true);
+        d["to"] = ConnEnd(conn, false);
+
+        // The connection's own designation - the wire number an engineer reads
+        // off the drawing. Type-dependent, so recorded as absent rather than
+        // silently omitted when a connection has no property list.
+        object props = TryRead(conn, "Properties", absent);
+        if (props != null)
+        {
+            foreach (string p in new string[] {
+                "CONNECTION_DESIGNATION", "CONNECTION_CABLENAME",
+                "CONNECTION_COLORNAME", "CONNECTION_CROSSSECTION" })
+            {
+                object v = TryRead(props, p, null);
+                // SafeText, not ToString: an EMPTY property throws
+                // EmptyPropertyException on conversion even though the read
+                // succeeded - measured on an ungenerated connection.
+                string s = SafeText(v);
+                if (s != null && s.Length > 0) d[p] = s;
+            }
+        }
+
+        if (absent.Count > 0) d["absentMembers"] = absent;
+        return d;
+    }
+'''
+
+
+def live_read_connections(page: str = None, limit: int = 200,
+                          timeout_seconds: float = 120.0) -> dict:
+    """
+    Read the project's LOGICAL connections - what is actually wired to what.
+
+    This is the difference between "a line was drawn" and "these two devices are
+    connected". live_connect_pins proves GRAPHICAL adjacency: a line touches two
+    pins. The logical `Connection` objects are what carry connection
+    designations, wire numbers, cable assignment and every report - and they do
+    not exist until EPLAN generates them.
+
+    Without this, a caller told "connected: true" could reasonably conclude the
+    schematic is electrically correct when it is not. That is a source of false
+    confidence in the one layer built to prevent it.
+
+    READ-ONLY. This deliberately does NOT run eplan_generate_connections for
+    you: generating connections MUTATES the project, and a tool named "read"
+    that quietly writes is exactly the kind of surprise this layer exists to
+    avoid. If nothing comes back, the result says so and names the tool to run.
+
+    Args:
+        page: Only connections on this page. Omit for the whole project.
+        limit: Max connections returned (default 200). The true total is always
+            reported, so a truncated read is never mistaken for the whole set.
+        timeout_seconds: Default 120s - a project-wide walk is not fast.
+
+    Returns:
+        {"success", "connections": [...], "total", "returned", "truncated",
+         "page"}
+
+        Each connection: {"handle", "page", "kindOfWire", "isPlaced",
+        "from": {...}, "to": {...}} where each end carries "device" (the device
+        tag), "designation" (the connection point), "pinIndex" and "location".
+
+        When the project has NO connections at all, "stale" is true and
+        "nextStep" names eplan_generate_connections - because zero connections
+        almost always means they have not been generated yet, not that nothing
+        is wired.
+    """
+    try:
+        limit = cs_int(limit, "limit", minimum=1, maximum=5000)
+        page_cs = cs_escape(cs_text(page, "page")) if page else None
+    except SchematicValueError as exc:
+        return _err(exc)
+
+    page_filter = ""
+    if page_cs:
+        page_filter = '''
+                object cpg = TryRead(conn, "Page", null);
+                string cpgName = cpg == null ? null : PropText(cpg, "Name");
+                if (cpgName != PAGENAME) continue;'''
+
+    body = '''            Type finderType = FindType("Eplan.EplApi.DataModel.DMObjectsFinder");
+            object finder = Activator.CreateInstance(finderType, new object[] { project });
+            Type filterType = FindType("Eplan.EplApi.DataModel.ConnectionsFilter");
+            object filter = Activator.CreateInstance(filterType);
+            MethodInfo getConns = RequireMethod(finderType, "GetConnections",
+                new string[] { filterType.Name }, false);
+            results["boundSignature"] = getConns.ToString();
+
+            IEnumerable found = (IEnumerable)Call(getConns, finder, new object[] { filter });
+            if (found == null)
+                throw new Exception("GetConnections returned null; refusing to report " +
+                    "an unwired project, because that is indistinguishable from " +
+                    "connections simply not having been generated.");
+
+            List<object> items = new List<object>();
+            int total = 0, matched = 0;
+            foreach (object conn in found)
+            {
+                if (conn == null) continue;
+                total++;''' + page_filter + '''
+                matched++;
+                if (items.Count < LIMIT) items.Add(DumpConnection(conn));
+            }
+            results["total"] = total;
+            results["matched"] = matched;
+            results["returned"] = items.Count;
+            results["truncated"] = matched > items.Count;
+            results["connections"] = items;
+'''
+    subs = {"LIMIT": str(limit)}
+    if page_cs:
+        subs["PAGENAME"] = '"%s"' % page_cs
+    body = _fill(body, **subs)
+
+    out = _shape(_execute_script(
+        _script(_cls("ReadConn"), body,
+                extra_helpers=_HELPERS_SCHEMATIC + _HELPERS_CONNECTIONS),
+        timeout=timeout_seconds,
+    ))
+    if out.get("success"):
+        if page:
+            out["page"] = page
+        if not out.get("total"):
+            # Zero connections almost always means they have not been generated,
+            # not that nothing is wired. Say which, rather than letting the
+            # caller read an empty list as "nothing is connected".
+            out["stale"] = True
+            out["nextStep"] = (
+                "This project reports NO logical connections at all, which "
+                "usually means they have not been generated yet rather than "
+                "that nothing is wired. Run eplan_generate_connections (it "
+                "MODIFIES the project) and read again. Graphical lines drawn by "
+                "live_connect_pins do not become Connection objects until then."
+            )
+        elif page and not out.get("matched"):
+            out["stale"] = False
+            out["note"] = (
+                "The project has %d connection(s) but none on page %r. The "
+                "page may genuinely have no wiring, or connections may predate "
+                "the lines drawn on it - regenerate if in doubt."
+                % (out.get("total", 0), page)
             )
     return out
