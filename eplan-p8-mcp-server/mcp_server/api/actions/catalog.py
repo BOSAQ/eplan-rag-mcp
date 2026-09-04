@@ -158,14 +158,20 @@ def action_catalog(
             callable but documented only by their observed GUI command lines.
         wrapped: True for actions that already have a typed MCP tool, False for
             those that do not, None (default) for both.
-        available_only: True to return only actions the recorded live probe
-            found registered in this EPLAN installation (module loaded and
-            licensed). Of the 1150 registry entries only 937 resolved: the rest
-            are dialog ids, GED interaction names (values for
-            XGedStartInteractionAction /Name:, not actions in their own right),
-            or features this licence does not include. Prefer this when picking
-            an action to actually run. Each record also carries "live_resolved"
-            (True/False, or None if never probed) and "module_name".
+        available_only: True to return only actions that the RECORDED probe
+            found registered - and the recording was made on the reference
+            installation this repo shipped, NOT on the machine you are talking
+            to. So this filter is advisory: an action it hides may well run
+            here, and an action it keeps can still refuse with a licence error,
+            because module licensing is enforced at execution time and not at
+            lookup time. The names that fail to resolve are mostly dialog ids
+            and GED interaction names (values for XGedStartInteractionAction
+            /Name:, not actions in their own right) rather than missing
+            features. Re-probe this machine with tools/probe_live_actions.py to
+            make the filter authoritative. Each record also carries
+            "live_resolved" (True/False, or None if never probed) and
+            "module_name"; the shipped totals are in the registry's
+            _meta.counts rather than quoted here, so they cannot go stale.
         limit: Maximum records to return. The full match count is always
             reported, so a truncated result is never mistaken for the total.
 

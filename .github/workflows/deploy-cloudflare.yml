@@ -8,6 +8,13 @@ on:
 
 jobs:
   deploy:
+    # Only the upstream repo holds the Cloudflare credentials this deploys with.
+    # Without this guard a fork that enables Actions gets a red X on its default
+    # branch (both secrets empty), and a fork that happens to have its OWN
+    # Cloudflare credentials would deploy a Worker named `eplan-rag-mcp` onto the
+    # custom domain from wrangler.jsonc into that account. Skipping elsewhere is
+    # the correct outcome in both cases.
+    if: github.repository == 'covagashi/eplan-rag-mcp'
     runs-on: ubuntu-latest
     defaults:
       run:
