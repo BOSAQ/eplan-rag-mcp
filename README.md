@@ -48,23 +48,41 @@ Each sub-project has its own README with installation and usage details.
 
 ### Local EPLAN automation (P8)
 
-The local MCP server lets Claude drive a running EPLAN instance. It exposes
-**199 tools**: 8 connection/utility tools, **187 EPLAN action tools** (`eplan_*`,
-every one executed silently inside a C# script under QuietMode — no EPLAN
-dialog can block unattended runs), and **4 Asset Administration Shell tools**
-(`aas_*`) for AAS/AASX digital-twin export and import. The 187 include 4
-live-DataModel tools (`eplan_live_query_functions`, `eplan_live_query_pages`,
-`eplan_live_set_function_text`, `eplan_live_set_connection_designations`) that
-read and edit the currently open project's object model via runtime
-reflection, working around a script-engine limitation on static `using`
-directives. Beyond individual actions they also cover the building blocks for
-fully unattended develop-deploy-test loops: EPLAN application lifecycle control
+The local MCP server lets Claude drive a running EPLAN instance. In its
+default (`full`) mode it exposes **199 tools**: 8 connection/utility tools,
+**183 typed EPLAN action tools** (`eplan_*`, one per documented/verified
+action, every one executed silently inside a C# script under QuietMode — no
+EPLAN dialog can block unattended runs), **4 action-catalog tools**
+(`eplan_action_catalog` / `_describe` / `_run` / `_ribbon_catalog`) that reach
+a further ~1,050 EPLAN actions which exist only as GUI buttons — mined from
+the install's `MFTools.xml` rather than the official docs, and deliberately
+*not* given one wrapper tool each (that would have tripled the tool count and
+hurt tool selection for everything else) — and **4 Asset Administration Shell
+tools** (`aas_*`) for AAS/AASX digital-twin export and import. The 183 typed
+tools include 4 live-DataModel tools (`eplan_live_query_functions`,
+`eplan_live_query_pages`, `eplan_live_set_function_text`,
+`eplan_live_set_connection_designations`) that read and edit the currently
+open project's object model via runtime reflection, working around a
+script-engine limitation on static `using` directives. Beyond individual
+actions they also cover the building blocks for fully unattended
+develop-deploy-test loops: EPLAN application lifecycle control
 (`eplan_app_launch` / `eplan_app_shutdown` / `eplan_app_restart` — exit EPLAN,
 swap add-in DLLs, relaunch, reconnect, reopen the project), disposable scratch
 project fixtures cloned from a template (`eplan_scratch_project_*`), reading
 EPLAN's system message tree (`eplan_get_system_messages` — see the same
 errors/warnings the user sees in the GUI), and private extension modules (see
 below). Full tool-by-tool reference: [the project wiki](https://github.com/covagashi/eplan-rag-mcp/wiki).
+
+An optional `EPLAN_MCP_MODE=discovery` publishes 13 tools instead of 199,
+trading a token-heavy tool list for one extra search round-trip per new task
+— worth it for MCP clients that send every tool's full schema on every
+request. **Skip it in Claude Code specifically**: Claude Code already defers
+tool schemas itself (a name list up front, a schema fetched on demand), so the
+`full` 199-tool list already costs it about as little as `discovery`'s 13
+would, and layering `discovery`'s own search → describe → call indirection on
+top adds a redundant round-trip with no offsetting saving. See
+`eplan-p8-mcp-server/mcp_server/README.md#discovery-mode-eplan_mcp_mode` for
+the full tradeoff and numbers.
 
 The EPLAN version is **auto-detected**: the server scans
 `C:\Program Files\EPLAN\Platform` and targets the newest installed version.

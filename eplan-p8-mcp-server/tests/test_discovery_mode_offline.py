@@ -450,3 +450,40 @@ def test_stripped_tool_behaves_identically_to_unstripped(server, monkeypatch):
         assert "backup" in stripped[0], "the tool did not actually run"
     finally:
         loop.close()
+
+
+def test_prune_does_not_delete_a_parameter_literally_named_title(server):
+    """
+    Audit #42 item 11. prune() popped "title" from every dict it walked
+    without tracking whether that dict was a SCHEMA NODE (where "title" is
+    pydantic's auto-generated, safe to drop) or a "properties"/"$defs" MAP
+    (where "title" is a parameter/definition NAME - a dict KEY, not a schema
+    keyword). A tool parameter literally named `title` had its entire schema
+    entry deleted from `properties` while `required` still named it.
+    """
+    from mcp.server.fastmcp import FastMCP
+
+    app = FastMCP("prune-test")
+
+    @app.tool()
+    def rename_page(title: str, page_name: str = "=A1") -> dict:
+        """A tool with a parameter that collides with the schema keyword."""
+        return {"success": True, "title": title, "page_name": page_name}
+
+    tool = next(iter(app._tool_manager._tools.values()))
+    before = tool.parameters
+    assert "title" in before["properties"], "test setup: pydantic must have generated it"
+
+    server.strip_schema_boilerplate(app)
+
+    after = tool.parameters
+    assert "title" in after["properties"], (
+        "the `title` PARAMETER's whole schema was deleted, not just the "
+        "auto-generated title KEYWORD inside some node"
+    )
+    assert after["properties"]["title"].get("type") == "string"
+    assert "title" in after.get("required", []), "required must still name it"
+    # The actual boilerplate this pass exists to remove must still be gone:
+    # the ROOT schema's own auto-generated title, a sibling of "properties",
+    # not the parameter living one level down inside it.
+    assert "title" not in after

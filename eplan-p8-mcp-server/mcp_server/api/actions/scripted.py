@@ -9,9 +9,9 @@ These actions access internal EPLAN APIs that aren't available via standard acti
 EVERY generated script here must be valid **C# 5**. On EPLAN 2026 the script
 engine compiles with a pre-C# 6 compiler - probed directly: `?.` gives
 CS1525, and a dictionary index initializer gives "CS1525: Invalid expression
-term '['". 2027's engine is newer and accepts the initializer (see the
-correction in docs/live-expectations), but these tools target both, so write
-to the older floor:
+term '['". 2027's engine is newer and accepts the initializer (see
+live.py's header, corrected in 0099e8e1e), but these tools target both, so
+write to the older floor:
     ?.  ?[]   null-conditional         -> Convert.ToString(x), or a null check
     $"..."      string interpolation   -> string.Format / concatenation
     dictionary index initializers      -> assign after construction

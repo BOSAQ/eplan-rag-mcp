@@ -19,21 +19,33 @@ def update_reports(
     Update project reports/evaluations.
     Action: reports
 
+    Live-verified 2026-09-04: passing only use_page_filter/page_filter_name
+    (no page_name/page_names/page_identifiers) left TYPE="PROJECT", where the
+    action documents PAGEFILTERNAME/PAGENAMEn/SELn as "only effective with
+    the PAGES ... value[s] of the TYPE parameter" - so the filter was silently
+    dropped and the whole project's reports were updated instead. Audit #42
+    item 3.
+
     Args:
         project_name: Project path (optional)
         page_name: Specific page to update (its report will be updated)
         page_names: List of page names
         page_identifiers: List of page identifiers (SELn)
-        use_page_filter: Use active page filter
-        page_filter_name: Name of specific page filter
+        use_page_filter: Use active page filter. Selects TYPE="PAGES" on its
+            own, same as page_filter_name.
+        page_filter_name: Name of specific page filter. Selects TYPE="PAGES"
+            on its own, same as use_page_filter.
     """
     manager, error = _get_connected_manager()
     if error:
         return error
 
-    # Determine type based on parameters
+    # Determine type based on parameters. Any of these implies a page-scoped
+    # update - the filter arguments are as much a page selector as an
+    # explicit page_name, and EPLAN ignores them under TYPE="PROJECT".
     report_type = "PROJECT"
-    if page_name or page_names or page_identifiers:
+    if (page_name or page_names or page_identifiers
+            or use_page_filter or page_filter_name):
         report_type = "PAGES"
 
     parts = ["reports", f"/TYPE:{report_type}"]

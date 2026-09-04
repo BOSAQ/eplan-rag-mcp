@@ -3,7 +3,10 @@
 Goal: let Claude drive EPLAN the way a human can — every API action *and* every
 GUI button — without publishing one MCP tool per action.
 
-Measured on **EPLAN Electric P8 2027.0.1 Premium** (`C:\Program Files\EPLAN\Platform\2027.0.1`).
+Measured on a reference installation of **EPLAN Electric P8 2027.0.1**.
+Counts below are transcribed from the committed data files rather than from a
+past session's prose; `tests/test_coverage_counts_offline.py` fails if the two
+drift apart again.
 
 ## The inventory
 
@@ -21,20 +24,22 @@ byte-stable (no timestamp), and degrades gracefully with a warning when
 
 ### What this install actually has
 
-`ActionManager.FindAction(name, silent=true)` probed over all 1148 candidate
+`ActionManager.FindAction(name, silent=true)` probed over all 1150 candidate
 names (`tools/data/live_actions_2027.json`):
 
-- **937 resolve** — registered, module loaded, licensed. Includes **all 100
-  documented actions**, so nothing in the official API is outside this
-  subscription.
-- 211 do not, and they are explained rather than mysterious:
+- **938 resolve** on that installation — registered and module loaded. This
+  included all 100 documented actions there; on any other machine the set
+  depends on which modules are installed and licensed, so treat the figure as
+  a property of the reference installation and not of the API.
+- 212 do not, and they are explained rather than mysterious:
   - 141 come only from the `Dialogs` section — those are **dialog ids**, not actions.
   - 46 are **GED interaction names** (values for `XGedStartInteractionAction /Name:`,
     not standalone actions) — extracted to `tools/data/ged_interaction_names.json`.
-  - **7 are genuine gaps**: `ExportActionPxcCxe`, `ExportActionPxcMarking`,
-    `ExportActionPxcPlanning`, `ExportActionPxcSettings` (Phoenix Contact add-on,
-    not installed), `XGedViewExternalDocumentAction`,
-    `XSettingsProjCreateAllDescAction`, `XSettingsProjCreateDescAction`.
+  - **7 are genuine gaps** on the reference installation: four
+    `ExportActionPxc*` actions, which belong to a third-party add-on that was
+    not present there, plus `XGedViewExternalDocumentAction`,
+    `XSettingsProjCreateAllDescAction` and `XSettingsProjCreateDescAction`.
+    An installation carrying that add-on will resolve the first four.
 
 ## How the actions are exposed
 
@@ -66,8 +71,9 @@ degraded tool selection for everything else.
 - `eplan_action_catalog(search, category, documented_only, wrapped, available_only, limit)`
   — offline registry search; always reports the true match count so a truncated
   list is never mistaken for the total. `available_only=True` restricts results
-  to the 937 actions the live probe found registered on this installation, and
-  every record carries `live_resolved` + `module_name`.
+  to the actions the recorded probe found registered on the reference
+  installation - advisory, not a licence check for the machine you are talking
+  to - and every record carries `live_resolved` + `module_name`.
 - `eplan_action_describe(name)` — registry entry + live `FindAction` probe
   (resolved? `ModuleName`?). Degrades to registry-only when disconnected.
 - `eplan_action_run(name, params, dry_run, allow_unknown_params)` — validated
@@ -101,7 +107,8 @@ So a button a human clicks can be found by name and then run with
 
 ## Testing
 
-**Offline: 411 passed, 2 skipped.** The 2 skips are the documentation
+**Offline: the whole suite runs with EPLAN closed.** Two tests skip: the
+documentation
 cross-check for `XAMlExportProductionData2SmartMountingAction` and
 `LockUnlockAllObjects` — the only two wrapped actions whose EPLAN doc page 404s,
 so there is no official parameter table to check their `/KEY`s against.
@@ -175,6 +182,52 @@ caveat below.
 A contributor whose installation includes Pro Panel, or who has a project
 containing preplanning data, can verify the first four and report back; the
 docstrings say precisely what to run.
+
+### Contributor report: EPLAN 2025.0.3 Electric P8 with Pro Panel (2026-09-03)
+
+A second, independent installation (not the 2027.0.1 reference above — 2027.0.1
+is not installed there) does have Pro Panel licensed, and was used to follow up
+on exactly the invitation above. Numbers below are from that install; they do
+not change or re-measure anything stated for the 2027.0.1 reference — read them
+as a second data point, not a correction.
+
+- **The 3D gate itself is not a general "Electric P8 lacks Pro Panel" limit —
+  it's per-installation.** `XCabCreateInstallationSpace` (headless,
+  `InstallationSpace.Create`) succeeded outright against a disposable scratch
+  clone. So the prerequisite the four 3D/planning actions share is satisfiable
+  on some Electric P8 installs, just not the one this document was measured
+  against.
+- **`XAMlExportProductionData2RASCenterAction`: executed, and it works.**
+  Ran against the same scratch project with a real `FileName`; it produced a
+  15.3 MB AutomationML file at the given path. This is the first live
+  execution of this action recorded anywhere in this document — worth
+  promoting out of "shipped but not live-verified" once the docstring's `NOT
+  VERIFIED` block is updated to cite it.
+- **`XAMlExportProductionData2SmartMountingAction`: executed, still fails.**
+  `success:false`, no message surfaced (neither in the return value nor in
+  `eplan_get_system_messages`) — consistent with the RAS Center sibling now
+  working, this failure is *not* the 3D prerequisite. Given the action has no
+  documentation page anywhere (confirmed above by the wiki sweep), the
+  strongest remaining hypothesis is still what this doc already says: the
+  inferred parameter name(s) are wrong, or the action name itself is not a
+  real, callable action on this EPLAN version.
+- **`XPlaUpdateDetailAction`: executed, returned `success:true` — but
+  inconclusively.** The scratch project (a parts/3D-macro bulk-import
+  project, not a preplanning one) had zero preplanning objects, same
+  precondition gap as the reference install, but the *outcome differs*: a
+  silent successful no-op here vs. a failure inside `PlanningLog` on the
+  reference install. That discrepancy is itself worth a note in the
+  docstring — a caller cannot currently tell "processed 0 objects
+  successfully" apart from "processed some objects successfully" from the
+  return value alone on at least one of the two installations.
+- **`InsertModelViewAction`: still not exercised.** Not blocked by the 3D
+  prerequisite this time (the gate works here) — blocked on finding an
+  existing page name to pass as the mandatory `PAGENAME`, headless, without a
+  reliable non-interactive page-listing or page-creation path in the current
+  tool surface. `execute_custom_script` was tried for this and hit an
+  unrelated, separately-reported issue (compile-error timeouts — see the
+  `eplan-development` skill's `pitfalls.md` #9), so this one is a tooling gap
+  in the test harness, not a finding about the action itself.
 
 **An important caveat on availability data.** `ActionManager.FindAction`
 resolving an action means its module is *loaded*, **not** that it is licensed to
@@ -261,7 +314,7 @@ turned up no action page that is not already in the list.
 
 ```
 python tools/build_action_registry.py      # re-mine MFTools.xml + docs
-python -m pytest tests/ -q                 # 411 passed, 2 skipped expected
+python -m pytest tests/ -q                 # all green, 2 documented skips
 python tools/validate_actions.py --out tools/action_validation_report.md
 ```
 

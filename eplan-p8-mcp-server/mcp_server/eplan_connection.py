@@ -217,7 +217,7 @@ def eplan_pids() -> list:
         return []
 
 
-def eplan_listening_ports() -> list:
+def eplan_listening_ports(only_pids=None) -> list:
     """TCP ports EPLAN.exe processes are LISTENING on (via netstat).
 
     Fallback discovery: GetActiveEplanServersOnLocalMachine is unreliable
@@ -226,11 +226,21 @@ def eplan_listening_ports() -> list:
     fresh EPLAN 2027 listening on 49153, server enumeration empty). The
     remoting port is dynamic (49152 is only the usual first choice), so
     never assume the default - discover.
+
+    Args:
+        only_pids: If given, restrict results to ports owned by one of these
+            PIDs (any iterable, coerced to a set). Used by app_launch to tell
+            the instance it just started apart from one that was already
+            running - see Audit #42 item 12.
     """
     import subprocess
     pids = set(eplan_pids())
     if not pids:
         return []
+    if only_pids is not None:
+        pids &= set(only_pids)
+        if not pids:
+            return []
     ports = []
     try:
         out = subprocess.run(["netstat", "-ano", "-p", "TCP"],
