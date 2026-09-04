@@ -2,7 +2,7 @@
 Pins the tool count that llm.md advertises against what the server publishes.
 
 llm.md tells the model "It exposes **199 tools**". That number is correct today
-(verified: build_app(mode="full") publishes exactly 199), so this is not a rot
+(the assertion below re-derives it from build_app each run), so this is not a rot
 fix - it is a rot *guard*. The count is hand-written prose about a number the
 code owns, which is precisely the shape that goes stale silently: add a wrapper
 and llm.md is wrong, with nothing to say so.
