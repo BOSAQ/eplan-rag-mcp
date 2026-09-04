@@ -59,11 +59,46 @@ def topology_operation(
 
 def import_preplanning_data(
     import_file: str,
-    project_name: str = None
+    scheme_name: str,
+    project_name: str = None,
+    table_name: str = None,
+    delimiter: str = None,
+    header: bool = None,
+    target_name: str = None,
+    skip_errors: bool = None,
+    overwrite: bool = None,
+    update_only: bool = None
 ) -> dict:
     """
     Import pre-planning data.
     Action: ImportPrePlanningData
+
+    The previous wrapper sent IMPORTFILE (the action documents FILENAME) and
+    never sent SCHEMENAME at all, though the action documents both as
+    mandatory. Audit #42 item 6.
+
+    Args:
+        import_file: Full path of the source file. Mandatory.
+        scheme_name: Name of the scheme mapping external data fields to
+            EPLAN properties. Mandatory - EPLAN's own docs mark this
+            required, same as import_file.
+        project_name: Project path (optional).
+        table_name: Table/data-area name within the source, for Excel
+            imports (optional).
+        delimiter: Column separator, for text-file imports (optional).
+        header: Column names appear in the "External field" column of the
+            assignment table (Excel imports only). Optional, EPLAN default
+            False.
+        target_name: DMPLAOBJECT_FULLDESIGNATION of the object to insert the
+            imported data under (optional). If omitted, data is inserted
+            under the project.
+        skip_errors: Do not abort on errors/messages during import
+            (optional). EPLAN's own default is True.
+        overwrite: Overwrite existing planning objects that share a name
+            with an imported one (optional). EPLAN's own default is True.
+        update_only: Only update existing structure segments/planning
+            objects, insert nothing new (optional). EPLAN's own default is
+            False.
     """
     manager, error = _get_connected_manager()
     if error:
@@ -72,18 +107,36 @@ def import_preplanning_data(
     action = _build_action(
         "ImportPrePlanningData",
         PROJECTNAME=project_name,
-        IMPORTFILE=import_file
+        FILENAME=import_file,
+        SCHEMENAME=scheme_name,
+        TABLENAME=table_name,
+        DELIMITER=delimiter,
+        HEADER=header,
+        TARGETNAME=target_name,
+        SKIPERRORS=skip_errors,
+        OVERWRITE=overwrite,
+        UPDATEONLY=update_only
     )
     return manager.execute_action(action)
 
 
 def export_segments_template(
     export_file: str,
-    project_name: str = None
+    project_name: str = None,
+    description: str = None
 ) -> dict:
     """
     Export segment templates to file.
     Action: ExportSegmentsTemplate
+
+    The previous wrapper sent EXPORTFILE; the action documents FILENAME.
+    Audit #42 item 6.
+
+    Args:
+        export_file: Full path of the target file. Mandatory.
+        project_name: Project path (optional).
+        description: Description stored in the exported file, in
+            multi-language string format (optional).
     """
     manager, error = _get_connected_manager()
     if error:
@@ -92,7 +145,8 @@ def export_segments_template(
     action = _build_action(
         "ExportSegmentsTemplate",
         PROJECTNAME=project_name,
-        EXPORTFILE=export_file
+        FILENAME=export_file,
+        DESCRIPTION=description
     )
     return manager.execute_action(action)
 
@@ -104,6 +158,13 @@ def import_segments_template(
     """
     Import segment templates from file.
     Action: ImportSegmentsTemplate
+
+    The previous wrapper sent IMPORTFILE; the action documents FILENAME.
+    Audit #42 item 6.
+
+    Args:
+        import_file: Full path of the source file. Mandatory.
+        project_name: Project path (optional).
     """
     manager, error = _get_connected_manager()
     if error:
@@ -112,7 +173,7 @@ def import_segments_template(
     action = _build_action(
         "ImportSegmentsTemplate",
         PROJECTNAME=project_name,
-        IMPORTFILE=import_file
+        FILENAME=import_file
     )
     return manager.execute_action(action)
 

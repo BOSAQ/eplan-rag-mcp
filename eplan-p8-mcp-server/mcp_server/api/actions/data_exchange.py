@@ -269,11 +269,38 @@ def export_dc_article_data(
 
 def import_dc_article_data(
     import_file: str,
-    project_name: str = None
+    show_import_messages: bool = None,
+    import_mode: int = None,
+    identify_by_name: bool = None,
+    progress_title: str = None
 ) -> dict:
     """
-    Import article data from external editing.
+    Import a data configuration (.edc) file into the article database.
     Action: XMImportDCArticleDataAction
+
+    The previous wrapper sent PROJECTNAME/IMPORTFILE, neither a real
+    parameter of this action - it targets the ARTICLE DATABASE, not a
+    project, and its file parameter is DATACONFIGURATIONFILE. Live-verified
+    2026-09-04: with the old parameters EPLAN logged "attempted to start the
+    XMPxfArticleImportDialog dialog in batch mode" and returned
+    success:false; with the corrected parameters AND show_import_messages=
+    False it ran to completion instead. show_import_messages defaults to
+    True in EPLAN itself (an info dialog), which is a strong candidate for
+    the same block if left unset here - pass False for an unattended call.
+    Audit #42 item 5.
+
+    Args:
+        import_file: Path to the .edc data configuration file.
+        show_import_messages: Show the info dialog with the added-part count
+            (optional; EPLAN's own default is True - see above). Pass False
+            for an unattended call.
+        import_mode: 0 = only create new objects, 1 = only update existing
+            objects, 2 = create new and update objects (optional; if
+            omitted, EPLAN may show a question dialog when new objects are
+            found).
+        identify_by_name: Identify objects by name instead of ID (optional;
+            EPLAN's default is by ID).
+        progress_title: Title for the progress dialog (optional).
     """
     manager, error = _get_connected_manager()
     if error:
@@ -281,8 +308,11 @@ def import_dc_article_data(
 
     action = _build_action(
         "XMImportDCArticleDataAction",
-        PROJECTNAME=project_name,
-        IMPORTFILE=import_file
+        DATACONFIGURATIONFILE=import_file,
+        SHOWIMPORTMESSAGES=show_import_messages,
+        IMPORTMODE=import_mode,
+        IDENTIFYBYNAMEINSTEADOFID=identify_by_name,
+        PROGRESSTITLE=progress_title
     )
     return manager.execute_action(action)
 
@@ -407,11 +437,40 @@ def export_pipeline_definitions(
 
 
 def delete_representation_type(
-    project_name: str = None
+    representation_type: int,
+    source: str,
+    destination: str
 ) -> dict:
     """
-    Delete representation type.
+    Remove a representation type from macro files, written to a new location.
     Action: XMDeleteReprTypeAction
+
+    This is a macro-file utility, not a project action: the previous wrapper
+    only sent PROJECTNAME, but the action's real (and only) parameters are
+    RepresentationType/Source/Destination - project_name never had anything
+    to do with it. Audit #42 item 7.
+
+    EPLAN's docs mark this action "can only be used interactively", and
+    that is confirmed, not theoretical: live-verified 2026-09-04 with
+    correct parameters (a real macro as Source, an empty scratch directory
+    as Destination) - the call returns success:true, logs no error, and
+    Destination stays empty. Under this server's forced QuietMode the
+    action is a genuine no-op, not a wrapper bug. There is no known
+    workaround; this is documented so a caller does not spend time
+    debugging parameters that were never the problem.
+
+    Source is read from, not modified; the result is written under
+    Destination (a directory), so the input macro(s) are left untouched.
+
+    Args:
+        representation_type: Representation type to remove, 0-13: 0 Neutral,
+            1 MultiLine, 2 SingleLine, 3 PairCrossReference, 4 Overview,
+            5 Graphics, 6 ArticlePlacement, 7 PI_FlowChart, 8 Fluid_MultiLine,
+            9 Cabling, 10 ArticlePlacement3D, 11 Functional, 12 Planning,
+            13 FluidFunctionalOverview.
+        source: A file, directory, or wildcard pattern selecting the macro(s)
+            to process (e.g. "C:/macros/*.ema").
+        destination: Output directory the processed macro(s) are written to.
     """
     manager, error = _get_connected_manager()
     if error:
@@ -419,7 +478,9 @@ def delete_representation_type(
 
     action = _build_action(
         "XMDeleteReprTypeAction",
-        PROJECTNAME=project_name
+        RepresentationType=representation_type,
+        Source=source,
+        Destination=destination
     )
     return manager.execute_action(action)
 

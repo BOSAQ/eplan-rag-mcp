@@ -17,14 +17,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from api.actions import _base, addons, cabinet, catalog, e3d, export_, import_
-from api.actions import interaction, planning, project, settings
+from api.actions import _base, addons, cabinet, catalog, data_exchange, e3d, export_, import_
+from api.actions import interaction, planning, project, properties, reports, settings
 
 
 # The modules whose wrappers this file covers. Each imported
 # `_get_connected_manager` into its own namespace, so each needs its own patch.
 WRAPPER_MODULES = (export_, import_, e3d, project, addons, cabinet, settings,
-                   interaction, planning)
+                   interaction, planning, properties, reports, data_exchange)
 
 # Same regex tools/validate_actions.py parses docstrings with.
 ACTION_RE = re.compile(r"Action:\s*([A-Za-z0-9_]+)")
@@ -94,12 +94,21 @@ WRAPPERS = [
     (addons.load_api_module_net, {}),
     (addons.register_custom_property_editor, {}),
     (cabinet.create_graving_text, {}),
+    (cabinet.import_preplanning_data,
+     {"import_file": "C:/pp.xlsx", "scheme_name": "config_scheme"}),
+    (cabinet.export_segments_template, {"export_file": "C:/segs.xml"}),
+    (cabinet.import_segments_template, {"import_file": "C:/segs.xml"}),
     (settings.lock_unlock_all_objects, {}),
     (interaction.start_ged_interaction, {"name": "XMIaInsertMacro"}),
     (interaction.insert_device, {}),
     (interaction.insert_symbol_reference, {}),
     (interaction.select_device, {}),
     (planning.update_detail_engineering, {}),
+    (properties.export_user_properties, {"export_file": "C:/out.xml"}),
+    (properties.import_user_properties, {"import_file": "C:/in.xml"}),
+    (data_exchange.delete_representation_type,
+     {"representation_type": 0, "source": "C:/macros/*.ema", "destination": "C:/out"}),
+    (data_exchange.import_dc_article_data, {"import_file": "C:/data.edc"}),
 ]
 
 WRAPPER_IDS = [fn.__name__ for fn, _ in WRAPPERS]
@@ -566,6 +575,57 @@ def test_import_3d_rejects_invalid_type(capture):
     result = import_.import_3d(import_file="C:/in.stp", type="BMP")
     assert result["success"] is False
     assert "STEP" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# 7c. update_reports - Audit #42 item 3.
+#
+# TYPE only became "PAGES" when page_name/page_names/page_identifiers were
+# given. Passing only use_page_filter or page_filter_name left TYPE="PROJECT",
+# where the action documents PAGEFILTERNAME as effective only under "PAGES" -
+# so the filter was silently ignored and the WHOLE project's reports were
+# updated instead of the filtered subset.
+#
+# Not folded into the generic WRAPPERS table above: `_all_kwargs`'s blanket
+# "x" turns page_names/page_identifiers (List[str] params) into the STRING
+# "x", which this wrapper's `for i, page in enumerate(page_names, 1)` then
+# iterates character-by-character - a real bug in the generic harness's
+# assumptions for any List[str] param, not in this wrapper. And TYPE is
+# always emitted regardless of which arguments were given, which breaks the
+# generic table's "one key per argument" kwarg-count check. Both apply to
+# every List[str]-taking wrapper equally, not just this one, and are out of
+# scope for the fix this issue asked for.
+# ---------------------------------------------------------------------------
+
+def test_update_reports_page_filter_alone_selects_pages_type(capture):
+    command = cmd(reports.update_reports(use_page_filter=True))
+    assert command.split()[0] == "reports"
+    assert "/TYPE:PAGES" in command
+    assert "/TYPE:PROJECT" not in command
+
+
+def test_update_reports_page_filter_name_alone_selects_pages_type(capture):
+    command = cmd(reports.update_reports(page_filter_name="MyFilter"))
+    assert "/TYPE:PAGES" in command
+    assert '/PAGEFILTERNAME:"MyFilter"' in command
+
+
+def test_update_reports_no_page_selector_still_means_whole_project(capture):
+    """The other half of the fix: a bare call must still mean TYPE=PROJECT -
+    over-selecting PAGES with no filter at all would be its own bug."""
+    command = cmd(reports.update_reports())
+    assert "/TYPE:PROJECT" in command
+
+
+def test_update_reports_emits_only_documented_keys(capture):
+    command = cmd(reports.update_reports(
+        project_name="C:/p.elk", page_name="=A1", page_names=["=A2", "=A3"],
+        page_identifiers=["1/2/3"], use_page_filter=True, page_filter_name="F1"))
+    documented = {p["name"] for p in OFFICIAL["reports"].get("params") or []}
+    documented |= {"PAGENAME1", "PAGENAME2", "SEL1"}  # PAGENAMEn/SELn instances
+    for key in keys(command):
+        assert key in documented, (
+            "update_reports emits /%s, not documented: %s" % (key, sorted(documented)))
 
 
 # ---------------------------------------------------------------------------
