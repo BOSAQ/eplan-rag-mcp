@@ -4,7 +4,7 @@ Complete implementation with all documented parameters.
 """
 
 from typing import List, Optional
-from ._base import _get_connected_manager, _build_action
+from ._base import _get_connected_manager, _build_action, _quote_param
 
 
 def generate_connections(
@@ -36,20 +36,20 @@ def generate_connections(
     parts = ["generate", "/TYPE:CONNECTIONS"]
 
     if project_name:
-        parts.append(f'/PROJECTNAME:"{project_name}"')
+        parts.append(_quote_param("PROJECTNAME", project_name))
     if page_name:
-        parts.append(f'/PAGENAME:"{page_name}"')
+        parts.append(_quote_param("PAGENAME", page_name))
     if rebuild_all:
         parts.append("/REBUILDALLCONNECTIONS:1")
     if use_page_filter:
         parts.append("/USEPAGEFILTER:1")
     if page_filter_name:
-        parts.append(f'/PAGEFILTERNAME:"{page_filter_name}"')
+        parts.append(_quote_param("PAGEFILTERNAME", page_filter_name))
 
     # Multiple page names
     if page_names:
         for i, page in enumerate(page_names, 1):
-            parts.append(f'/PAGENAME{i}:"{page}"')
+            parts.append(_quote_param(f"PAGENAME{i}", page))
 
     # Page identifiers (SELn)
     if page_identifiers:

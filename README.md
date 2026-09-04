@@ -26,6 +26,7 @@ The repo contains three independent sub-projects: a local MCP server that drives
 ├── eplan-p8-mcp-server/          # LOCAL: MCP server that controls EPLAN P8
 ├── cloudflare-rag-eplan-p8/      # REMOTE: Cloudflare Worker that serves the P8 docs RAG over MCP
 ├── cloudflare-rag-eecpro/        # REMOTE: Cloudflare Worker that serves the EEC Pro docs RAG over MCP
+├── cloudflare-rag-eplan-2027/    # REMOTE: Cloudflare Worker that serves the 2027 API wiki (D1/FTS5 keyword search)
 └── claude-skills/                # SKILL: Claude Code skill for EPLAN P8 development
 ```
 
@@ -34,6 +35,7 @@ The repo contains three independent sub-projects: a local MCP server that drives
 | `eplan-p8-mcp-server/` | Local Python MCP | Drive a running EPLAN instance from Claude (open/close projects, exports, reports, scripts, etc.) | EPLAN Electric P8 |
 | `cloudflare-rag-eplan-p8/` | Remote Cloudflare Worker | Serve the P8 doc index as a remote MCP + REST API | EPLAN Electric P8 |
 | `cloudflare-rag-eecpro/` | Remote Cloudflare Worker | Serve the EEC Pro doc index as a remote MCP + REST API | EPLAN EEC Pro 2026 |
+| `cloudflare-rag-eplan-2027/` | Remote Cloudflare Worker | Serve the 2027 API wiki as a remote MCP; D1 + FTS5 keyword search, complementary to the semantic index above | EPLAN Electric P8 2027 |
 | `claude-skills/eplan-development/` | Claude Code skill | Teach Claude to write correct EPLAN scripts, API code, and Remote Client apps (patterns + pitfalls) | EPLAN Electric P8 |
 
 Each sub-project has its own README with installation and usage details.
@@ -279,6 +281,7 @@ Notes:
 ├── eplan-p8-mcp-server/          # 本地：控制 EPLAN P8 的 MCP 服务器
 ├── cloudflare-rag-eplan-p8/      # 远程：通过 MCP 提供 P8 文档 RAG 的 Cloudflare Worker
 ├── cloudflare-rag-eecpro/        # 远程：通过 MCP 提供 EEC Pro 文档 RAG 的 Cloudflare Worker
+├── cloudflare-rag-eplan-2027/    # 远程：通过 MCP 提供 2027 API 维基的 Cloudflare Worker（D1/FTS5 关键词检索）
 └── claude-skills/                # 技能：用于 EPLAN P8 开发的 Claude Code Skill
 ```
 
@@ -287,6 +290,7 @@ Notes:
 | `eplan-p8-mcp-server/` | 本地 Python MCP | 从 Claude 驱动正在运行的 EPLAN 实例（打开/关闭项目、导出、报表、脚本等） | EPLAN Electric P8 |
 | `cloudflare-rag-eplan-p8/` | 远程 Cloudflare Worker | 以远程 MCP + REST API 的形式提供 P8 文档索引 | EPLAN Electric P8 |
 | `cloudflare-rag-eecpro/` | 远程 Cloudflare Worker | 以远程 MCP + REST API 的形式提供 EEC Pro 文档索引 | EPLAN EEC Pro 2026 |
+| `cloudflare-rag-eplan-2027/` | 远程 Cloudflare Worker | 以远程 MCP 的形式提供 2027 API 维基；使用 D1 + FTS5 关键词检索，与上面的语义索引互补 | EPLAN Electric P8 2027 |
 | `claude-skills/eplan-development/` | Claude Code Skill | 教 Claude 写出正确的 EPLAN 脚本、API 代码和 Remote Client 应用（模式与陷阱） | EPLAN Electric P8 |
 
 每个子项目都有各自的 README，其中包含安装和使用的详细说明。

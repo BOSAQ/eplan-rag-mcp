@@ -4,7 +4,7 @@ Complete implementation with all documented parameters.
 """
 
 from typing import List, Dict, Optional
-from ._base import _get_connected_manager, _build_action
+from ._base import _get_connected_manager, _build_action, _quote_param
 
 
 def renumber_devices(
@@ -252,9 +252,9 @@ def renumber_connections(
     parts = ["renumber", "/TYPE:CONNECTIONS"]
 
     if project_name:
-        parts.append(f'/PROJECTNAME:"{project_name}"')
+        parts.append(_quote_param("PROJECTNAME", project_name))
     if config_scheme:
-        parts.append(f'/CONFIGSCHEME:"{config_scheme}"')
+        parts.append(_quote_param("CONFIGSCHEME", config_scheme))
     if use_selection:
         parts.append("/USESELECTION:1")
 

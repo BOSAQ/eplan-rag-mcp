@@ -227,10 +227,9 @@ def test_no_ambiguous_single_arg_getproperty(capture, name, call):
 # Property-name aliases
 # ---------------------------------------------------------------------------
 
-def test_friendly_property_aliases_resolved_for_query(capture):
-    scripted.parts_db_query(return_properties=["Manufacturer", "Description1"], limit=1)
-    assert '"ARTICLE_MANUFACTURER", "ARTICLE_DESCR1"' in capture["script"]
-
+# Reads resolve friendly names inside the generated C# (upstream's
+# FriendlyToArticle map) and are covered by test_parts_db_offline.py. Only the
+# WRITE path resolves them in Python, so that is what is tested here.
 
 def test_friendly_property_alias_resolved_for_update(capture):
     scripted.parts_db_update("PN-1", "Manufacturer", "BOSAQ")
@@ -243,13 +242,30 @@ def test_unknown_property_name_passes_through(capture):
     assert '"ARTICLE_SOMETHING_ODD"' in capture["script"]
 
 
-def test_query_defaults_use_real_property_names(capture):
-    scripted.parts_db_query(limit=1)
+def test_friendly_property_aliases_resolved_for_create(capture):
+    scripted.parts_db_create("PN-1", {"Manufacturer": "BOSAQ", "Description1": "d"})
     script = capture["script"]
-    # "Description1"/"Manufacturer" as raw names exist on neither MDPart nor
-    # the property list, so the old defaults could only return empty strings.
-    assert '"ARTICLE_DESCR1"' in script
-    assert '"ARTICLE_MANUFACTURER"' in script
+    assert '"ARTICLE_MANUFACTURER", "ARTICLE_DESCR1"' in script
+
+
+@pytest.mark.parametrize("call", [
+    lambda: scripted.parts_db_create("PN-1", {"ARTICLE_MANUFACTURER": "BOSAQ"}),
+    lambda: scripted.parts_db_update("PN-1", "ARTICLE_MANUFACTURER", "BOSAQ"),
+], ids=["create", "update"])
+def test_write_path_goes_through_mdpropertyvalue(capture, call):
+    """Upstream's #33 fixed the READ path only: create and update still did
+    SetValue(propList, "a string"). The setter takes an MDPropertyValue, and
+    MDPropertyValue has only a default constructor - the conversion that works
+    in source is compile-time only - so a bare string is an ArgumentException,
+    caught and reported as a failed property. Both paths must construct one."""
+    call()
+    script = capture["script"]
+    assert "new MDPropertyValue()" in script
+    assert "pv.Set(value)" in script
+    assert "WriteProp(" in script
+    # And the lookup must pin the non-indexed overload, or every property
+    # throws AmbiguousMatchException before the write is even attempted.
+    assert "Type.EmptyTypes" in script
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +316,10 @@ def test_timeout_reports_eplan_compile_errors(fake_eplan, monkeypatch):
 
 
 def test_genuine_timeout_says_no_compile_error(fake_eplan, monkeypatch):
+    """With the cause unconfirmed, `message` stays the verbatim string
+    upstream (#28) preserves for callers matching on it, and the reasoning
+    goes in `error`. `message` only stops saying "timeout" once the compiler
+    has actually been confirmed as the cause - see the test above."""
     monkeypatch.setattr(
         scripted, "get_system_messages",
         lambda min_level="Warning", max_messages=100: {"success": True, "messages": []},
@@ -307,7 +327,9 @@ def test_genuine_timeout_says_no_compile_error(fake_eplan, monkeypatch):
     result = scripted._execute_script("// compiles but hangs", timeout=0.2)
 
     assert result["success"] is False
-    assert "no compile error" in result["message"]
+    assert result["message"] == "Timeout waiting for script results"
+    assert result["errorType"] == "McpScriptNoResult"
+    assert "no compile error" in result["error"]
     assert "compile_errors" not in result
 
 
@@ -338,3 +360,48 @@ def test_get_part_uses_generic_product_group(capture):
     script = capture["script"]
     assert "part.GenericProductGroup" in script
     assert "part.ProductTopGroup" not in script
+
+
+def test_cs0105_noise_does_not_crowd_out_the_real_error(fake_eplan, monkeypatch):
+    """EPLAN pre-imports the namespaces every generated script declares, so
+    CS0105 fires on nearly every script and never explains a failure. It
+    stays in compile_errors, but must not lead the summary line."""
+    def fake_messages(min_level="Warning", max_messages=100):
+        name = os.path.basename(fake_eplan.script_path)
+        return {
+            "success": True,
+            "messages": [
+                {"text": "Compile errors in script C:\gen\\" + name + " :"},
+                {"text": "CS0105 (Row:1, Column:7): The using directive for 'System' appeared previously"},
+                {"text": "CS0105 (Row:4, Column:7): The using directive for 'Eplan.EplApi.Scripting' appeared previously"},
+                {"text": "CS1525 (Row:12, Column:20): Invalid expression term '.'"},
+                {"text": "The script C:\gen\\" + name + " cannot be compiled."},
+            ],
+        }
+
+    monkeypatch.setattr(scripted, "get_system_messages", fake_messages)
+    result = scripted._execute_script("// never compiles", timeout=0.2)
+
+    assert result["message"] == "Script did not compile: CS1525 (Row:12, Column:20): Invalid expression term '.'"
+    # Still recorded in full for anyone who wants the raw tree.
+    assert sum("CS0105" in e for e in result["compile_errors"]) == 2
+
+
+def test_summary_falls_back_when_every_line_is_cs0105(fake_eplan, monkeypatch):
+    """If CS0105 is somehow all there is, report it rather than an empty
+    'Script did not compile: ' with no reason attached."""
+    def fake_messages(min_level="Warning", max_messages=100):
+        name = os.path.basename(fake_eplan.script_path)
+        return {
+            "success": True,
+            "messages": [
+                {"text": "Compile errors in script C:\gen\\" + name + " :"},
+                {"text": "CS0105 (Row:1, Column:7): The using directive for 'System' appeared previously"},
+                {"text": "The script C:\gen\\" + name + " cannot be compiled."},
+            ],
+        }
+
+    monkeypatch.setattr(scripted, "get_system_messages", fake_messages)
+    result = scripted._execute_script("// never compiles", timeout=0.2)
+
+    assert "CS0105" in result["message"]
