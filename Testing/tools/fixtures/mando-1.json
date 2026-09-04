@@ -1,0 +1,193 @@
+{
+  "_comment": "Verbatim eplan_live_read_page output for page +MANDO/1 of the scratch clone EJEMPLO_scratch_20260904_120740, captured 2026-09-04. Kept as a regression fixture for page_to_ascii.py because it happens to contain one of every placement family the renderer has to handle: MacroBox (the drawing frame), Terminal, Function, SymbolReference corners (CO v0/v2/v3) and a T-node (TLRU), ConnectionDefinitionPoint (CDP), InterruptionPoint (BP) and a PathText graphic. Do not hand-edit - re-capture it instead.",
+  "project": "EJEMPLO_scratch_20260904_120740",
+  "page": "+MANDO/1",
+  "pageType": "Circuit",
+  "gridSize": 2.0,
+  "size": { "x": 420.0, "y": 297.0 },
+  "placementCount": 17,
+  "matched": 17,
+  "returned": 17,
+  "truncated": false,
+  "placements": [
+    {
+      "clrType": "SymbolReference",
+      "handle": "28/42/8983154/0",
+      "location": { "x": 196.0, "y": 260.0 },
+      "boundingBox": [ { "x": 193.75, "y": 257.75 }, { "x": 198.25, "y": 260.25 } ],
+      "symbol": { "library": "SPECIAL", "name": "TLRU", "variantNr": 0 },
+      "pins": [
+        { "index": 0, "direction": "Down",  "raw": { "x": 0.0, "y": 0.0 }, "point": { "x": 196.0, "y": 260.0 }, "frame": "relative" },
+        { "index": 1, "direction": "Left",  "raw": { "x": 0.0, "y": 0.0 }, "point": { "x": 196.0, "y": 260.0 }, "frame": "relative" },
+        { "index": 2, "direction": "Right", "raw": { "x": 2.0, "y": 0.0 }, "point": { "x": 198.0, "y": 260.0 }, "frame": "relative" }
+      ],
+      "absentMembers": [ "Name" ]
+    },
+    {
+      "clrType": "PathText",
+      "handle": "28/83/8983155/0",
+      "location": { "x": 302.0, "y": 46.0 },
+      "boundingBox": [ { "x": 285.16, "y": 38.5 }, { "x": 318.84, "y": 46.0 } ],
+      "absentMembers": [ "Name", "SymbolVariant", "GraphicalConnectionPoints" ]
+    },
+    {
+      "clrType": "SymbolReference",
+      "handle": "28/42/8983156/0",
+      "location": { "x": 310.0, "y": 230.0 },
+      "boundingBox": [ { "x": 307.75, "y": 229.75 }, { "x": 310.25, "y": 232.25 } ],
+      "symbol": { "library": "SPECIAL", "name": "CO", "variantNr": 2 },
+      "pins": [
+        { "index": 0, "direction": "Left", "raw": { "x": 0.0, "y": 0.0 }, "point": { "x": 310.0, "y": 230.0 }, "frame": "relative" },
+        { "index": 1, "direction": "Up",   "raw": { "x": 0.0, "y": 0.0 }, "point": { "x": 310.0, "y": 230.0 }, "frame": "relative" }
+      ],
+      "absentMembers": [ "Name" ]
+    },
+    {
+      "clrType": "SymbolReference",
+      "handle": "28/42/8983157/0",
+      "location": { "x": 302.0, "y": 230.0 },
+      "boundingBox": [ { "x": 301.75, "y": 227.75 }, { "x": 304.25, "y": 230.25 } ],
+      "symbol": { "library": "SPECIAL", "name": "CO", "variantNr": 0 },
+      "pins": [
+        { "index": 0, "direction": "Right", "raw": { "x": 0.0, "y": 0.0 }, "point": { "x": 302.0, "y": 230.0 }, "frame": "relative" },
+        { "index": 1, "direction": "Down",  "raw": { "x": 0.0, "y": 0.0 }, "point": { "x": 302.0, "y": 230.0 }, "frame": "relative" }
+      ],
+      "absentMembers": [ "Name" ]
+    },
+    {
+      "clrType": "SymbolReference",
+      "handle": "28/42/8983158/0",
+      "location": { "x": 302.0, "y": 260.0 },
+      "boundingBox": [ { "x": 299.75, "y": 257.75 }, { "x": 302.25, "y": 260.25 } ],
+      "symbol": { "library": "SPECIAL", "name": "CO", "variantNr": 3 },
+      "pins": [
+        { "index": 0, "direction": "Left", "raw": { "x": 0.0, "y": 0.0 }, "point": { "x": 302.0, "y": 260.0 }, "frame": "relative" },
+        { "index": 1, "direction": "Down", "raw": { "x": 0.0, "y": 0.0 }, "point": { "x": 302.0, "y": 260.0 }, "frame": "relative" }
+      ],
+      "absentMembers": [ "Name" ]
+    },
+    {
+      "clrType": "SymbolReference",
+      "handle": "28/42/8983159/0",
+      "location": { "x": 302.0, "y": 80.0 },
+      "boundingBox": [ { "x": 299.75, "y": 79.75 }, { "x": 302.25, "y": 82.25 } ],
+      "symbol": { "library": "SPECIAL", "name": "CO", "variantNr": 2 },
+      "pins": [
+        { "index": 0, "direction": "Left", "raw": { "x": 0.0, "y": 0.0 }, "point": { "x": 302.0, "y": 80.0 }, "frame": "relative" },
+        { "index": 1, "direction": "Up",   "raw": { "x": 0.0, "y": 0.0 }, "point": { "x": 302.0, "y": 80.0 }, "frame": "relative" }
+      ],
+      "absentMembers": [ "Name" ]
+    },
+    {
+      "clrType": "MacroBox",
+      "handle": "28/37/8983160/0",
+      "location": { "x": 2.0, "y": 290.0 },
+      "boundingBox": [ { "x": 2.0, "y": 18.0 }, { "x": 418.0, "y": 290.0 } ],
+      "symbol": { "library": "SPECIAL", "name": "MC", "variantNr": 0 },
+      "pins": [],
+      "absentMembers": [ "Name" ]
+    },
+    {
+      "clrType": "Terminal",
+      "handle": "28/17/198954/0",
+      "name": "=+++MANDO-TOPL:1",
+      "location": { "x": 0.0, "y": 292.0 },
+      "boundingBox": [ { "x": -0.25, "y": 290.55 }, { "x": 0.25, "y": 292.25 } ],
+      "symbol": { "library": "SPECIAL", "name": "PLCCPNG", "variantNr": 0 },
+      "pins": [ { "index": 0, "direction": "Up", "raw": { "x": 0.0, "y": 0.0 }, "point": { "x": 0.0, "y": 292.0 }, "frame": "relative" } ]
+    },
+    {
+      "clrType": "Terminal",
+      "handle": "28/17/198955/0",
+      "name": "=+++MANDO-BOTL:1",
+      "location": { "x": 0.0, "y": 16.0 },
+      "boundingBox": [ { "x": -0.25, "y": 14.55 }, { "x": 0.25, "y": 16.25 } ],
+      "symbol": { "library": "SPECIAL", "name": "PLCCPNG", "variantNr": 0 },
+      "pins": [ { "index": 0, "direction": "Up", "raw": { "x": 0.0, "y": 0.0 }, "point": { "x": 0.0, "y": 16.0 }, "frame": "relative" } ]
+    },
+    {
+      "clrType": "Terminal",
+      "handle": "28/17/198956/0",
+      "name": "=+++MANDO-BOTR:2",
+      "location": { "x": 420.0, "y": 16.0 },
+      "boundingBox": [ { "x": 419.75, "y": 14.55 }, { "x": 420.25, "y": 16.25 } ],
+      "symbol": { "library": "SPECIAL", "name": "PLCCPNG", "variantNr": 0 },
+      "pins": [ { "index": 0, "direction": "Up", "raw": { "x": 0.0, "y": 0.0 }, "point": { "x": 420.0, "y": 16.0 }, "frame": "relative" } ]
+    },
+    {
+      "clrType": "Terminal",
+      "handle": "28/17/198957/0",
+      "name": "=+++MANDO-TOPR:2",
+      "location": { "x": 420.0, "y": 292.0 },
+      "boundingBox": [ { "x": 419.75, "y": 290.55 }, { "x": 420.25, "y": 292.25 } ],
+      "symbol": { "library": "SPECIAL", "name": "PLCCPNG", "variantNr": 0 },
+      "pins": [ { "index": 0, "direction": "Up", "raw": { "x": 0.0, "y": 0.0 }, "point": { "x": 420.0, "y": 292.0 }, "frame": "relative" } ]
+    },
+    {
+      "clrType": "ConnectionDefinitionPoint",
+      "handle": "28/59/199000/0",
+      "name": "=+++",
+      "location": { "x": 208.0, "y": 260.0 },
+      "boundingBox": [ { "x": 206.75, "y": 258.75 }, { "x": 209.25, "y": 261.25 } ],
+      "symbol": { "library": "SPECIAL", "name": "CDP", "variantNr": 0 },
+      "pins": []
+    },
+    {
+      "clrType": "ConnectionDefinitionPoint",
+      "handle": "28/59/199001/0",
+      "name": "=+++",
+      "location": { "x": 278.0, "y": 80.0 },
+      "boundingBox": [ { "x": 276.75, "y": 78.75 }, { "x": 279.25, "y": 81.25 } ],
+      "symbol": { "library": "SPECIAL", "name": "CDP", "variantNr": 0 },
+      "pins": []
+    },
+    {
+      "clrType": "Function",
+      "handle": "28/17/199002/0",
+      "name": "=+++MANDO-K1.001",
+      "location": { "x": 302.0, "y": 240.0 },
+      "boundingBox": [ { "x": 301.75, "y": 235.75 }, { "x": 310.25, "y": 244.2479 } ],
+      "symbol": { "library": "IEC_symbol", "name": "W2", "variantNr": 6 },
+      "pins": [
+        { "index": 0, "direction": "Down", "raw": { "x": 0.0, "y": -4.0 }, "point": { "x": 302.0, "y": 236.0 }, "frame": "relative" },
+        { "index": 1, "direction": "Up",   "raw": { "x": 0.0, "y": 4.0 },  "point": { "x": 302.0, "y": 244.0 }, "frame": "relative" },
+        { "index": 2, "direction": "Down", "raw": { "x": 8.0, "y": -4.0 }, "point": { "x": 310.0, "y": 236.0 }, "frame": "relative" }
+      ]
+    },
+    {
+      "clrType": "Function",
+      "handle": "28/17/199003/0",
+      "name": "=+++MANDO-Q2.001",
+      "location": { "x": 302.0, "y": 106.0 },
+      "boundingBox": [ { "x": 298.0, "y": 101.75 }, { "x": 306.0, "y": 110.25 } ],
+      "symbol": { "library": "IEC_symbol", "name": "K", "variantNr": 0 },
+      "pins": [
+        { "index": 0, "direction": "Up",   "raw": { "x": 0.0, "y": 4.0 },  "point": { "x": 302.0, "y": 110.0 }, "frame": "relative" },
+        { "index": 1, "direction": "Down", "raw": { "x": 0.0, "y": -4.0 }, "point": { "x": 302.0, "y": 102.0 }, "frame": "relative" }
+      ]
+    },
+    {
+      "clrType": "ConnectionDefinitionPoint",
+      "handle": "28/59/199004/0",
+      "name": "=+++",
+      "location": { "x": 302.0, "y": 168.0 },
+      "boundingBox": [ { "x": 300.75, "y": 166.75 }, { "x": 303.25, "y": 169.25 } ],
+      "symbol": { "library": "SPECIAL", "name": "CDP", "variantNr": 0 },
+      "pins": []
+    },
+    {
+      "clrType": "InterruptionPoint",
+      "handle": "28/70/24174/0",
+      "name": "=+++MANDO-0V60",
+      "location": { "x": 266.0, "y": 80.0 },
+      "boundingBox": [ { "x": 263.75, "y": 78.75 }, { "x": 268.25, "y": 81.25 } ],
+      "symbol": { "library": "SPECIAL", "name": "BP", "variantNr": 0 },
+      "pins": [
+        { "index": 0, "direction": "Right", "raw": { "x": 0.0, "y": 0.0 }, "point": { "x": 266.0, "y": 80.0 }, "frame": "relative" },
+        { "index": 1, "direction": "Left",  "raw": { "x": 0.0, "y": 0.0 }, "point": { "x": 266.0, "y": 80.0 }, "frame": "relative" }
+      ]
+    }
+  ],
+  "handle": "28/4/6571/0",
+  "success": true
+}
