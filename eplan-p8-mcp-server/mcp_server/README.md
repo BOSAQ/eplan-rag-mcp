@@ -182,6 +182,49 @@ list and loads a schema on demand — so there the practical cost of this server
 around 1,800 tokens, not 49,000. The strip still helps there, because it shrinks
 each schema that gets loaded. See `../TOKEN_COST.md` for the full measurement.
 
+## The action trace (`EPLAN_MCP_LOG_DIR`)
+
+Every executed action appends one JSON line to `logs/actions.jsonl`: timestamp,
+action string, duration, success, and whichever of `executor` / `error` /
+`errorType` / `eplanMessages` / `message` the result carried. It is the only
+durable record of what the server actually did, and it survives the
+conversation — which is what makes it possible to audit behaviour after the
+fact rather than from memory.
+
+Set `EPLAN_MCP_LOG_DIR` to write it elsewhere. The test suite sets it to a
+`tmp_path` via an autouse fixture, and needs to: before that existed, running
+`pytest` appended to the real trace. A census on 2026-09-03 found **871 of its
+1,463 entries were test fixtures** from 59 separate runs, scattered through the
+file rather than sitting at the head — so any statistic drawn from it was
+partly measuring the test suite.
+
+Two cautions if you use the trace as evidence:
+
+- **`LOGGED_RESULT_KEYS` in `eplan_connection.py` is a filter.** A diagnostic
+  field added to an action result but not to that tuple never reaches the
+  trace, and is therefore invisible to any later audit. There is a test that
+  fails when the tuple changes, so the omission gets noticed.
+- **The trace records real paths**, including project paths on network shares.
+  `logs/` is gitignored, and the file should be treated as potentially
+  containing customer data — do not attach it to a public issue.
+
+## Escape hatch (`EPLAN_MCP_LEGACY_CLI`)
+
+`EPLAN_MCP_LEGACY_CLI=1` makes the generated C# fall back to the original
+`CommandLineInterpreter`-only template — no `ActionManager.FindAction`, no
+message-tree capture — as a known-good path in case the enhanced template ever
+fails to compile on an EPLAN version it has not been tried on. It has existed
+since the capture landed but was documented nowhere; recording it here so it is
+discoverable.
+
+Know what it costs before setting it: the legacy template does not emit
+`using Eplan.EplApi.Base;`, so with the flag on there is **no `eplanMessages`
+at all** and its `catch` records only `ex.Message` with no exception chain and
+no `errorType`. Since the message capture is the half that demonstrably
+delivers EPLAN's own error text, the flag turns diagnostics off rather than
+degrading them. Use it to get unstuck on a new EPLAN version, not as a
+steady state.
+
 ## Discovery mode (`EPLAN_MCP_MODE`)
 
 Every MCP request carries the **whole tool list**. With one MCP tool per

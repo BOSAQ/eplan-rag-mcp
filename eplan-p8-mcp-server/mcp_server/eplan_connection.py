@@ -103,6 +103,24 @@ def _select_dotnet_runtime(runtime: str) -> None:
 
 EPLAN_EXE_NAME = "EPLAN.exe"
 
+# Result keys copied into each actions.jsonl entry, on top of the always-present
+# ts / action / duration_s / success.
+#
+# READ THIS BEFORE ADDING A DIAGNOSTIC FIELD TO AN ACTION RESULT. This tuple is
+# a filter. A field that is not listed here never reaches the trace, so it
+# cannot be counted in a later audit - and the trace is the only record of what
+# this server actually did. Every audit finding about executor behaviour and
+# message truncation came out of these entries; a field absent from them is
+# invisible to the next one. test_log_action_offline.py fails if a key is added
+# to the result contract without being added here.
+LOGGED_RESULT_KEYS = (
+    "executor",
+    "error",
+    "errorType",
+    "eplanMessages",
+    "message",
+)
+
 
 def eplan_pids() -> list:
     """PIDs of running EPLAN.exe processes (empty list on any error)."""
@@ -355,15 +373,31 @@ class EPLANConnectionManager:
             self.connected = False
             return {"alive": False, "message": f"Ping failed: {e}"}
 
+    def _log_dir(self) -> str:
+        """Directory for actions.jsonl.
+
+        EPLAN_MCP_LOG_DIR overrides the default, matching the EPLAN_MCP_MODE /
+        EPLAN_MCP_EXTENSIONS convention. Read per call rather than cached at
+        import, so a test fixture can point it at a tmp_path.
+        """
+        override = os.environ.get("EPLAN_MCP_LOG_DIR")
+        if override:
+            return override
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+
     def _log_action(self, action: str, result: dict, started: float) -> None:
-        """Append one JSON line per executed action to logs/actions.jsonl.
+        """Append one JSON line per executed action to actions.jsonl.
 
         Persistent trace of what the LLM did in EPLAN (Audit/TODO.md item 2):
         survives the conversation and lets failures be correlated with what
         the user saw on screen. Never raises.
+
+        Note that LOGGED_RESULT_KEYS is a filter, not documentation: a
+        diagnostic field added to the result but not to that tuple is absent
+        from the trace, and so cannot be measured in a later audit.
         """
         try:
-            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+            log_dir = self._log_dir()
             os.makedirs(log_dir, exist_ok=True)
             entry = {
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -371,7 +405,7 @@ class EPLANConnectionManager:
                 "duration_s": round(time.time() - started, 3),
                 "success": result.get("success"),
             }
-            for key in ("executor", "error", "errorType", "eplanMessages", "message"):
+            for key in LOGGED_RESULT_KEYS:
                 if result.get(key):
                     entry[key] = result[key]
             with open(os.path.join(log_dir, "actions.jsonl"), "a", encoding="utf-8") as f:
