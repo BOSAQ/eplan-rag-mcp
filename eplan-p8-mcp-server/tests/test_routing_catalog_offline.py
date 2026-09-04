@@ -30,6 +30,20 @@ for p in (MCP, os.path.join(MCP, "api")):
 from api.actions import schematic as S  # noqa: E402
 
 
+def want_types(cs):
+    """
+    The types this call actually searches for.
+
+    Scoped deliberately to the `wantTypes` line. The shared C# helpers carry a
+    ROUTING_TYPES array naming EVERY connection type, so grepping the whole
+    script for a type name always succeeds and proves nothing - the same
+    false-positive trap that has bitten these checks before.
+    """
+    line = [l for l in cs.splitlines() if "List<string> wantTypes" in l]
+    assert len(line) == 1, "expected exactly one wantTypes line, got %d" % len(line)
+    return line[0]
+
+
 # Shaped exactly like a real read, including the same-type duplicates.
 LIVE = {
     "success": True,
@@ -97,7 +111,8 @@ def test_it_selects_by_symbol_TYPE_not_by_name(capture):
     """`CO` is this project's corner. Another project's may not be."""
     S.live_routing_catalog()
     cs = capture["cs"]
-    assert '"Routing"' in cs and '"TNodeUp"' in cs
+    line = want_types(cs)
+    assert '"Routing"' in line and '"TNodeUp"' in line
     assert 'PropText(s, "Type")' in cs
     # The one thing it must NOT do.
     assert '"CO"' not in cs
@@ -105,18 +120,18 @@ def test_it_selects_by_symbol_TYPE_not_by_name(capture):
 
 def test_every_routing_type_is_searched_by_default(capture):
     S.live_routing_catalog()
-    cs = capture["cs"]
+    line = want_types(capture["cs"])
     for t in ("Routing", "DynamicRouting", "RoutingCross", "RoutingBridge",
               "TNodeUp", "TNodeDown", "TNodeLeft", "TNodeRight",
               "InterruptionPoint", "ConnectionDefinition"):
-        assert '"%s"' % t in cs, "%s is not searched for" % t
+        assert '"%s"' % t in line, "%s is not searched for" % t
 
 
 def test_a_single_type_narrows_the_search(capture):
     S.live_routing_catalog(symbol_type="Routing")
-    cs = capture["cs"]
-    assert '"Routing"' in cs
-    assert '"TNodeUp"' not in cs
+    line = want_types(capture["cs"])
+    assert '"Routing"' in line
+    assert '"TNodeUp"' not in line
 
 
 def test_an_unknown_symbol_type_is_refused_with_the_real_list(capture):

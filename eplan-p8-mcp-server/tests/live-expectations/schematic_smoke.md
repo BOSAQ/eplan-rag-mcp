@@ -396,3 +396,113 @@ correct is a house convention, not something the tool can derive.
 
 Queried live: `directions=["Right","Down"]` → exactly `SPECIAL_en_US/CO` v0.
 `directions=["Up","Left","Right"]` → both `TLRO` and `TLRO_1`, flagged ambiguous.
+
+## Placing a corner, measured end to end
+
+### A routing symbol is not a Function
+
+    Function.Create(page, CO v0, ...)  ->  ObjectCreationException:
+                                           "S511085Cannot create function."
+
+That message names no cause, and it is the same for every reason a function
+cannot be created. The path that works is the generic one:
+
+    SymbolVariant.Create(Page)  ->  Eplan.EplApi.DataModel.SymbolReference
+                                    (base: Eplan.EplApi.DataModel.Placement)
+
+`SymbolVariant` offers exactly two Create overloads - `SymbolReference
+Create(Page)` and `Void Create(Placement[])`. Neither takes a coordinate, so a
+connection symbol is BORN AT (0, 0) and has to be moved:
+
+    locationAfterCreate  {"x": 0.0, "y": 0.0}
+    locationWritable     true
+    locationAfterMove    {"x": 120.0, "y": 200.0}
+
+Hence two tools rather than one, each refusing the other's input by name:
+`live_place_symbol` for devices, `live_place_connection_symbol` for wiring.
+Placing a device through `SymbolVariant.Create` would not error - it would
+return a bare `SymbolReference` that can carry no device tag and no article,
+which is worse than a refusal.
+
+### A corner's two pins coincide
+
+    CO v0 at (120, 200):  pin0 Right offset (0, 0)
+                          pin1 Down  offset (0, 0)
+
+Both connection points sit exactly at the placement location, because a corner
+IS the turn. That is why one coordinate places it. The direction pair is what
+distinguishes the four variants, not the geometry.
+
+### Direction is absolute, and +y is Up
+
+    SL v0 at (120.7, 200):  pin0 Up   offset (0, +6.3)
+                            pin1 Down offset (0, -6.3)
+
+`PinBase.Direction` names the page direction the pin faces, and it agrees with
+the geometry. It is NOT derivable from the offset - a pin at the top of a
+symbol need not face up - so `DumpPlacement` now reports it.
+
+### Variant IS rotation
+
+Measured across `NFPA_symbol_en_US/SL`:
+
+    v0  Up / Down          v4  Up / Down        (mirrored)
+    v1  Left / Right       v5  Left / Right
+    v2  Down / Up          v6  Down / Up
+    v3  Right / Left       v7  Right / Left
+
+So there is no separate rotation parameter to add: 0-3 are the four rotations
+and 4-7 their mirrors. v2 is not v0 - the pin ORDER is swapped, which decides
+which physical terminal is designation 1.
+
+### Same-direction variants are NOT interchangeable
+
+The important correction. All five `TLRU` variants face Down+Left+Right, but
+they put the pins in DIFFERENT PLACES:
+
+    v0  Down (0,0)   Left (0,0)      Right (+3.17, 0)
+    v1  Down (0,0)   Right (0,0)     Left  (-3.17, 0)
+    v2  Left (0,0)   Right (0,0)     Down  (0, -3.17)
+    v3  Right (0,0)  Left (0,0)      Down  (0, -3.17)
+    v8  Right (0,0)  Left (0,0)      Down  (0, 0)       <- all three at the vertex
+
+An earlier version of the ambiguity message said these "differ in pin ORDER".
+That was wrong, and it mattered: a caller told only that would have assumed any
+variant would do. `live_routing_catalog` therefore reports each variant's pin
+OFFSETS as well as its directions, and the refusal prints them.
+
+### The proof: a corner is a pass-through, not an endpoint
+
+Built on a scratch page, then `generate_connections`:
+
+    -K1  (SL v0, vertical)    pin1 Down  at (120.65, 228.60)
+    CO   v1  Up+Right         pin0 Right at (120.65, 190.50)
+                              pin1 Up    at (120.65, 190.50)
+    -K2  (SL v1, horizontal)  pin0 Left  at (158.75, 190.50)
+
+    connections on the page: 1
+        +-K1[2] -> +-K2[1]   isPlaced=True
+
+ONE connection, and the corner is not either end of it. EPLAN routes the wire
+from -K1 down, through the corner, and right into -K2, reporting a single
+logical connection between the two devices. So a corner is not a connection
+endpoint - it is a hint about the path.
+
+The first attempt at this test produced ZERO connections, because -K2 was
+placed with its default vertical variant: its pins faced Up and Down, so
+nothing faced the corner's Right pin and the run dead-ended. A connection
+symbol only does anything if something faces each of its pins.
+
+### The branch
+
+    TLRU v8 at (120.65, 133.35), all three pins at the vertex
+    -K3 (SL v1) to the left, -K4 (SL v1) to the right, -K5 (SL v0) below
+
+    connections on the page: 3
+        +-K1[2] -> +-K2[1]     (the corner, from above)
+        +-K3[2] -> +-K4[1]     (straight through the T)
+        +-K4[1] -> +-K5[1]     (the branch)
+
+All three legs wired, and the PDF export shows the solid junction dot EPLAN
+draws at a real T. Note the branch is reported against -K4, not against the
+T-node: same rule as the corner - the connection symbol is not an endpoint.
