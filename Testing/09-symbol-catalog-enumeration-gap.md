@@ -83,6 +83,29 @@ is above id 72.
 3. **Treat `truncated: false` here as unverified.** It is reporting on the
    walk, not on the library.
 
+## Root cause
+
+Located in `schematic.py`'s depth-2 walk. It constructs `Symbol(lib, i)` for
+`i` in `0..5000` and aborts on the first index that does not construct:
+
+```csharp
+    try { sym = symCtorInt.Invoke(new object[] { lib, i }); }
+    catch { break; }
+    if (sym == null) break;
+    if (PropText(sym, "IsValid") != "True") continue;
+```
+
+`SymbolId`s are sparse, so the first gap — id 73 in `SPECIAL` — ends the walk
+while ids up to at least 402 remain. The comment above the loop asserts it
+"enumerates a library exhaustively", which is the false premise; it holds only
+for a library with contiguous ids.
+
+Both `break`s should be `continue`. The `IsValid` test already skips
+non-symbols the same way, and the 5000 bound already caps the cost, so the
+machinery for tolerating gaps is present — the exception path just takes the
+wrong branch. Not applied here: this file records findings, and changing
+server code mid-session leaves the running MCP server stale until restarted.
+
 ## Scope of the claim
 
 Measured on `SPECIAL` in `EJEMPLO_scratch_20260904_120740` (EPLAN 2025), which
