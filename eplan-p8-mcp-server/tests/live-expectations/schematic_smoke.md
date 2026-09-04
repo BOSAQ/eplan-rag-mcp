@@ -157,3 +157,53 @@ whether programmatically created lines need something further.
 **This is why `live_connect_pins` reports `lineDrawn`, never `wired`** — and why
 `live_read_connections` exists. The gap is real, and it is now measurable rather
 than assumed.
+
+## RESOLVED (2026-09-03): generation works, but it ignores the drawn line
+
+Two findings, and the second is the important one.
+
+**1. Connections must be generated, and `generate /TYPE:CONNECTIONS` does it.**
+The earlier "0 connections" reading was taken before generation had produced
+anything for that page. On a page with four devices, generation moved the
+project from 3085 to 3087 connections.
+
+**2. EPLAN connected the devices it thought were adjacent, NOT the ones the
+drawn lines joined.**
+
+Placed and tagged:
+
+| Device | Position | Pins |
+|---|---|---|
+| `-K1` | (60.3, 241.3) | 0 above at y=247.65, 1 below at y=234.95 |
+| `-K2` | (139.7, 241.3) | same shape |
+| `-K3` | (60.3, 181.0) | pin 0 at y=187.325 |
+| `-K4` | (139.7, 139.7) | pin 0 at y=146.05 |
+
+Lines drawn: `-K1 → -K2` (horizontal, same Y) and `-K3 → -K4` (routed, via a
+corner). **Three** DynamicConnectionLines on the page.
+
+What generation produced:
+
+```
++-K1[2] (60.325, 241.3)  ->  +-K3[1] (60.325, 180.975)
++-K2[2] (139.7, 241.3)   ->  +-K4[1] (139.7, 139.7)
+```
+
+Those are the **vertically aligned** pairs — same X, bottom pin facing top pin.
+Not one of the three drawn lines produced a connection.
+
+### What this means for the wiring primitives
+
+EPLAN's auto-connect works on **device alignment**, not on graphical lines added
+through the API. The EPLAN-native way to wire two devices is to POSITION them so
+their connection points face each other and let generation create the
+connection; a `DynamicConnectionLine` placed programmatically is decoration
+unless it participates in that logic.
+
+So `live_connect_pins` and `live_connect_pins_routed` draw something visible and
+geometrically correct that does **not** wire anything. Their geometry fixes
+(anchoring, corners) remain valid and worth keeping, but the primitive a caller
+actually needs is placement-driven: put the devices where their pins meet.
+
+Recorded rather than patched, because the fix is a design change to the wiring
+layer and not a bug in these two tools.
