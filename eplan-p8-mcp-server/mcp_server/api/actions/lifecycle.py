@@ -114,8 +114,9 @@ def app_launch(version: str = None, variant: str = None, headless: bool = False,
 
     already_running = _eplan_pids()
     try:
-        # Detach so EPLAN outlives this MCP server process.
-        subprocess.Popen(
+        # Detach so EPLAN outlives this MCP server process. Keep the handle -
+        # its pid is how a pre-existing instance is told apart below.
+        proc = subprocess.Popen(
             cmdline,
             creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
             close_fds=True,
@@ -127,17 +128,36 @@ def app_launch(version: str = None, variant: str = None, headless: bool = False,
     # after a restart, so netstat-discovered listening ports of EPLAN.exe
     # serve as a fallback signal (verified live: enumeration stayed empty
     # while the port already accepted connections).
+    #
+    # GetActiveEplanServersOnLocalMachine (manager.get_active_servers()) does
+    # not report a PID, so it cannot tell a pre-existing instance's server
+    # apart from the one just launched. When nothing else was running before
+    # this call, that ambiguity does not exist and the fast path (servers,
+    # then unfiltered ports) is used as before. When one or more EPLAN
+    # instances already existed, only a listening port OWNED BY A NEW PID
+    # (this process's, or any that appeared after launch) is accepted -
+    # never the enumerated servers list, and never an old instance's port.
+    # Audit #42 item 12: this call used to accept whichever port turned up
+    # first, which could be the pre-existing instance's.
     deadline = time.time() + max(10, wait_seconds)
     servers = []
     fallback_ports = []
+    new_pids = set()
     while time.time() < deadline:
         time.sleep(3)
-        servers = manager.get_active_servers()
-        if servers:
-            break
-        fallback_ports = _eplan_listening_ports()
-        if fallback_ports:
-            break
+        if not already_running:
+            servers = manager.get_active_servers()
+            if servers:
+                break
+            fallback_ports = _eplan_listening_ports()
+            if fallback_ports:
+                break
+        else:
+            new_pids = set(_eplan_pids()) - set(already_running)
+            new_pids.add(proc.pid)
+            fallback_ports = _eplan_listening_ports(only_pids=new_pids)
+            if fallback_ports:
+                break
 
     port = servers[-1]["port"] if servers else (fallback_ports[-1] if fallback_ports else None)
     result = {
@@ -148,13 +168,25 @@ def app_launch(version: str = None, variant: str = None, headless: bool = False,
         "servers": servers,
         "fallback_ports": fallback_ports,
         "eplan_was_already_running": bool(already_running),
+        "new_pid": proc.pid,
     }
     if port is None:
-        result["error"] = (
-            f"EPLAN process started but no remoting server appeared within "
-            f"{wait_seconds}s. Check that 'Allow remote access via Remote Client' "
-            f"is enabled (File > Settings > Workstation > Interfaces > Remote access)."
-        )
+        if already_running:
+            result["error"] = (
+                f"EPLAN process (pid {proc.pid}) started, but no remoting port "
+                f"owned by that process (or any new EPLAN process) was found "
+                f"within {wait_seconds}s, and {len(already_running)} EPLAN "
+                f"instance(s) were already running before this call - refusing "
+                f"to connect to one of those instead of the one just launched. "
+                f"Check that 'Allow remote access via Remote Client' is enabled "
+                f"(File > Settings > Workstation > Interfaces > Remote access)."
+            )
+        else:
+            result["error"] = (
+                f"EPLAN process started but no remoting server appeared within "
+                f"{wait_seconds}s. Check that 'Allow remote access via Remote Client' "
+                f"is enabled (File > Settings > Workstation > Interfaces > Remote access)."
+            )
         return result
 
     if connect_after:
