@@ -17,13 +17,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from api.actions import _base, addons, cabinet, catalog, e3d, export_
+from api.actions import _base, addons, cabinet, catalog, e3d, export_, import_
 from api.actions import interaction, planning, project, settings
 
 
 # The modules whose wrappers this file covers. Each imported
 # `_get_connected_manager` into its own namespace, so each needs its own patch.
-WRAPPER_MODULES = (export_, e3d, project, addons, cabinet, settings,
+WRAPPER_MODULES = (export_, import_, e3d, project, addons, cabinet, settings,
                    interaction, planning)
 
 # Same regex tools/validate_actions.py parses docstrings with.
@@ -501,6 +501,71 @@ def test_wrapper_does_not_silently_drop_a_kwarg(capture, fn, _kwargs):
     params = [p for p in inspect.signature(fn).parameters if p not in raw_tails]
     command = cmd(fn(**_all_kwargs(fn)))
     assert len(keys(command)) == len(params), command
+
+
+# ---------------------------------------------------------------------------
+# 7b. export_3d / import_3d - Audit #42 items 1 and 4.
+#
+# Before this fix, export_3d sent FORMAT/INSTALLATIONSPACE (neither a real
+# export3d parameter) and never sent the mandatory TYPE; import_3d sent
+# IMPORTSCHEME (the action documents SCHEME) and also never sent TYPE.
+# Reproduced live 2026-09-04 (EPLAN 2025.0.3, Pro Panel licensed): both
+# actions answered "Este proceso no es compatible." and wrote nothing. The
+# fix was then verified live the same way - a real installation space
+# exported to a .stp file that import_3d could read back in.
+#
+# Not folded into the WRAPPERS table above: `type` is validated, and
+# `_all_kwargs`'s blanket "x" is not a legal value for it, so the two
+# generic tests that call every wrapper with all-"x" kwargs would break on
+# these before ever reaching _build_action.
+# ---------------------------------------------------------------------------
+
+def test_export_3d_emits_documented_keys(capture):
+    command = cmd(export_.export_3d(
+        destination_path="C:/out", type="STEP", project_name="C:/p.elk",
+        installation_space="BR1", export_scheme="Scheme1",
+        separate_files=True, filename="out.jt"))
+    assert command.split()[0] == "export3d"
+    documented = {p["name"] for p in OFFICIAL["export3d"].get("params") or []}
+    assert keys(command), command
+    for key in keys(command):
+        assert key in documented, (
+            "export3d emits /%s, not a documented parameter. Documented: %s"
+            % (key, sorted(documented)))
+    assert len(keys(command)) == len(inspect.signature(export_.export_3d).parameters)
+    assert "/TYPE:STEP" in command
+    assert "/INSTALLATIONSPACENAME:BR1" in command
+    assert "/FORMAT" not in command
+    assert "/INSTALLATIONSPACE:" not in command  # the old, wrong key
+
+
+def test_export_3d_rejects_invalid_type(capture):
+    result = export_.export_3d(destination_path="C:/out", type="BMP")
+    assert result["success"] is False
+    assert "STEP" in result["error"] and "JT" in result["error"]
+
+
+def test_import_3d_emits_documented_keys(capture):
+    command = cmd(import_.import_3d(
+        import_file="C:/in.stp", type="STEP", project_name="C:/p.elk",
+        import_scheme="Scheme1"))
+    assert command.split()[0] == "import3d"
+    documented = {p["name"] for p in OFFICIAL["import3d"].get("params") or []}
+    assert keys(command), command
+    for key in keys(command):
+        assert key in documented, (
+            "import3d emits /%s, not a documented parameter. Documented: %s"
+            % (key, sorted(documented)))
+    assert len(keys(command)) == len(inspect.signature(import_.import_3d).parameters)
+    assert "/TYPE:STEP" in command
+    assert "/SCHEME:Scheme1" in command
+    assert "/IMPORTSCHEME" not in command
+
+
+def test_import_3d_rejects_invalid_type(capture):
+    result = import_.import_3d(import_file="C:/in.stp", type="BMP")
+    assert result["success"] is False
+    assert "STEP" in result["error"]
 
 
 # ---------------------------------------------------------------------------

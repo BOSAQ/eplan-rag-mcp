@@ -334,8 +334,12 @@ def test_the_documented_injection_no_longer_reaches_the_action_string(
 def test_a_legitimate_export_is_unchanged_and_reparses_correctly(monkeypatch):
     """The guard must not alter output for valid input."""
     from api.actions import export_ as E
+    from api.actions import _base as base_mod
     seen = {}
-    monkeypatch.setattr(E, "_execute_with_quiet_mode",
+    # export_pdf_pages now goes through _execute_and_report_written (#53), which
+    # calls _execute_with_quiet_mode via _base's own module globals - patching
+    # export_._execute_with_quiet_mode no longer intercepts that call.
+    monkeypatch.setattr(base_mod, "_execute_with_quiet_mode",
                         lambda action: seen.setdefault("action", action) or {"success": True})
     E.export_pdf_pages(export_file="C:/out/a.pdf",
                        page_names=["=AP1/1", "=AP1/2"],
