@@ -49,6 +49,47 @@ using Eplan.EplApi.Scripting;
 
 public class CreateSpace_%EXECID%
 {
+    // Resolve an EPLAN type from the assemblies already loaded in the process.
+    //
+    // NOT Assembly.Load("Eplan.EplApi.DataModelu"): on 2027 that name belongs to
+    // the mixed-mode NATIVE twin and throws BadImageFormatException (0x8007000B,
+    // "attempt to load a program with an incorrect format"), which killed every
+    // tool in this module on its first statement. The managed object model was
+    // renamed between releases:
+    //
+    //     EPLAN 2025 (.NET Framework)  Eplan.EplApi.DataModelu  / ...HEServicesu
+    //     EPLAN 2027 (.NET 8/coreclr)  Eplan.EplApi.DataModelNetu / ...HEServicesNetu
+    //
+    // EPLAN already has the managed assembly loaded either way, so scanning the
+    // loaded set is both version-proof and cheaper than a load. Same approach as
+    // live.py's FindType, which is where this was proven first.
+    private static Assembly[] _asms;
+    private static Type FindType(string fullName)
+    {
+        if (_asms == null) _asms = AppDomain.CurrentDomain.GetAssemblies();
+        foreach (Assembly a in _asms)
+        {
+            try { Type t = a.GetType(fullName); if (t != null) return t; } catch { }
+        }
+        // Not loaded yet: try the managed names, newest scheme first. The
+        // un-suffixed names are deliberately absent - loading them throws.
+        foreach (string c in new string[] {
+            "Eplan.EplApi.DataModelNetu", "Eplan.EplApi.HEServicesNetu" })
+        {
+            try
+            {
+                Assembly a = Assembly.Load(c);
+                if (a == null) continue;
+                Type t = a.GetType(fullName);
+                if (t != null) { _asms = AppDomain.CurrentDomain.GetAssemblies(); return t; }
+            }
+            catch { }
+        }
+        throw new Exception("Could not resolve type " + fullName +
+            " in any loaded EPLAN assembly. On 2027 the managed object model is " +
+            "Eplan.EplApi.DataModelNetu, not Eplan.EplApi.DataModelu.");
+    }
+
     private static List<string> Chain(Exception ex)
     {
         var c = new List<string>();
@@ -63,14 +104,11 @@ public class CreateSpace_%EXECID%
         var results = new Dictionary<string, object>();
         try
         {
-            var dm = Assembly.Load("Eplan.EplApi.DataModelu");
-            var he = Assembly.Load("Eplan.EplApi.HEServicesu");
-
-            var lsType = dm.GetType("Eplan.EplApi.DataModel.LockingStep");
+            var lsType = FindType("Eplan.EplApi.DataModel.LockingStep");
             object lockStep = Activator.CreateInstance(lsType);
             try
             {
-                var ssType = he.GetType("Eplan.EplApi.HEServices.SelectionSet");
+                var ssType = FindType("Eplan.EplApi.HEServices.SelectionSet");
                 object ss = Activator.CreateInstance(ssType);
                 var getCur = ssType.GetMethod("GetCurrentProject", new Type[] { typeof(bool) });
                 object project = getCur.Invoke(ss, new object[] { false });
@@ -103,7 +141,7 @@ public class CreateSpace_%EXECID%
                     }
                     else
                     {
-                        var isType = dm.GetType("Eplan.EplApi.DataModel.E3D.InstallationSpace");
+                        var isType = FindType("Eplan.EplApi.DataModel.E3D.InstallationSpace");
                         var staticCreate = isType.GetMethods(BindingFlags.Public | BindingFlags.Static)
                             .FirstOrDefault(m => m.Name == "Create" && m.GetParameters().Length == 3);
                         if (staticCreate != null)
@@ -191,6 +229,47 @@ using Eplan.EplApi.Scripting;
 
 public class InsertMacro_%EXECID%
 {
+    // Resolve an EPLAN type from the assemblies already loaded in the process.
+    //
+    // NOT Assembly.Load("Eplan.EplApi.DataModelu"): on 2027 that name belongs to
+    // the mixed-mode NATIVE twin and throws BadImageFormatException (0x8007000B,
+    // "attempt to load a program with an incorrect format"), which killed every
+    // tool in this module on its first statement. The managed object model was
+    // renamed between releases:
+    //
+    //     EPLAN 2025 (.NET Framework)  Eplan.EplApi.DataModelu  / ...HEServicesu
+    //     EPLAN 2027 (.NET 8/coreclr)  Eplan.EplApi.DataModelNetu / ...HEServicesNetu
+    //
+    // EPLAN already has the managed assembly loaded either way, so scanning the
+    // loaded set is both version-proof and cheaper than a load. Same approach as
+    // live.py's FindType, which is where this was proven first.
+    private static Assembly[] _asms;
+    private static Type FindType(string fullName)
+    {
+        if (_asms == null) _asms = AppDomain.CurrentDomain.GetAssemblies();
+        foreach (Assembly a in _asms)
+        {
+            try { Type t = a.GetType(fullName); if (t != null) return t; } catch { }
+        }
+        // Not loaded yet: try the managed names, newest scheme first. The
+        // un-suffixed names are deliberately absent - loading them throws.
+        foreach (string c in new string[] {
+            "Eplan.EplApi.DataModelNetu", "Eplan.EplApi.HEServicesNetu" })
+        {
+            try
+            {
+                Assembly a = Assembly.Load(c);
+                if (a == null) continue;
+                Type t = a.GetType(fullName);
+                if (t != null) { _asms = AppDomain.CurrentDomain.GetAssemblies(); return t; }
+            }
+            catch { }
+        }
+        throw new Exception("Could not resolve type " + fullName +
+            " in any loaded EPLAN assembly. On 2027 the managed object model is " +
+            "Eplan.EplApi.DataModelNetu, not Eplan.EplApi.DataModelu.");
+    }
+
     private static List<string> Chain(Exception ex)
     {
         var c = new List<string>();
@@ -205,21 +284,18 @@ public class InsertMacro_%EXECID%
         var results = new Dictionary<string, object>();
         try
         {
-            var dm = Assembly.Load("Eplan.EplApi.DataModelu");
-            var he = Assembly.Load("Eplan.EplApi.HEServicesu");
-
-            var lsType = dm.GetType("Eplan.EplApi.DataModel.LockingStep");
+            var lsType = FindType("Eplan.EplApi.DataModel.LockingStep");
             object lockStep = Activator.CreateInstance(lsType);
             try
             {
-                var ssType = he.GetType("Eplan.EplApi.HEServices.SelectionSet");
+                var ssType = FindType("Eplan.EplApi.HEServices.SelectionSet");
                 object ss = Activator.CreateInstance(ssType);
                 object project = ssType.GetMethod("GetCurrentProject", new Type[] { typeof(bool) })
                     .Invoke(ss, new object[] { false });
                 if (project == null) { results["success"] = false; results["error"] = "no project"; return; }
                 results["project"] = (string)project.GetType().GetProperty("ProjectFullName").GetValue(project, null);
 
-                Type isType = dm.GetType("Eplan.EplApi.DataModel.E3D.InstallationSpace");
+                Type isType = FindType("Eplan.EplApi.DataModel.E3D.InstallationSpace");
                 object space = null;
                 var rawSpaces = project.GetType().GetProperty("InstallationSpaces").GetValue(project, null);
                 foreach (var s in (System.Collections.IEnumerable)rawSpaces)
@@ -230,7 +306,7 @@ public class InsertMacro_%EXECID%
                 if (space == null) { results["success"] = false; results["error"] = "space not found: %SPACE%"; return; }
                 results["spaceFound"] = true;
 
-                Type insertType = he.GetType("Eplan.EplApi.HEServices.Insert3D");
+                Type insertType = FindType("Eplan.EplApi.HEServices.Insert3D");
                 object insert = Activator.CreateInstance(insertType);
                 var candidates = insertType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
                     .Where(m => m.Name == "WindowMacro" && m.GetParameters().Length == 6)
