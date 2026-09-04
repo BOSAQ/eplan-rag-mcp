@@ -227,10 +227,9 @@ def test_no_ambiguous_single_arg_getproperty(capture, name, call):
 # Property-name aliases
 # ---------------------------------------------------------------------------
 
-def test_friendly_property_aliases_resolved_for_query(capture):
-    scripted.parts_db_query(return_properties=["Manufacturer", "Description1"], limit=1)
-    assert '"ARTICLE_MANUFACTURER", "ARTICLE_DESCR1"' in capture["script"]
-
+# Reads resolve friendly names inside the generated C# (upstream's
+# FriendlyToArticle map) and are covered by test_parts_db_offline.py. Only the
+# WRITE path resolves them in Python, so that is what is tested here.
 
 def test_friendly_property_alias_resolved_for_update(capture):
     scripted.parts_db_update("PN-1", "Manufacturer", "BOSAQ")
@@ -243,13 +242,30 @@ def test_unknown_property_name_passes_through(capture):
     assert '"ARTICLE_SOMETHING_ODD"' in capture["script"]
 
 
-def test_query_defaults_use_real_property_names(capture):
-    scripted.parts_db_query(limit=1)
+def test_friendly_property_aliases_resolved_for_create(capture):
+    scripted.parts_db_create("PN-1", {"Manufacturer": "BOSAQ", "Description1": "d"})
     script = capture["script"]
-    # "Description1"/"Manufacturer" as raw names exist on neither MDPart nor
-    # the property list, so the old defaults could only return empty strings.
-    assert '"ARTICLE_DESCR1"' in script
-    assert '"ARTICLE_MANUFACTURER"' in script
+    assert '"ARTICLE_MANUFACTURER", "ARTICLE_DESCR1"' in script
+
+
+@pytest.mark.parametrize("call", [
+    lambda: scripted.parts_db_create("PN-1", {"ARTICLE_MANUFACTURER": "BOSAQ"}),
+    lambda: scripted.parts_db_update("PN-1", "ARTICLE_MANUFACTURER", "BOSAQ"),
+], ids=["create", "update"])
+def test_write_path_goes_through_mdpropertyvalue(capture, call):
+    """Upstream's #33 fixed the READ path only: create and update still did
+    SetValue(propList, "a string"). The setter takes an MDPropertyValue, and
+    MDPropertyValue has only a default constructor - the conversion that works
+    in source is compile-time only - so a bare string is an ArgumentException,
+    caught and reported as a failed property. Both paths must construct one."""
+    call()
+    script = capture["script"]
+    assert "new MDPropertyValue()" in script
+    assert "pv.Set(value)" in script
+    assert "WriteProp(" in script
+    # And the lookup must pin the non-indexed overload, or every property
+    # throws AmbiguousMatchException before the write is even attempted.
+    assert "Type.EmptyTypes" in script
 
 
 # ---------------------------------------------------------------------------
