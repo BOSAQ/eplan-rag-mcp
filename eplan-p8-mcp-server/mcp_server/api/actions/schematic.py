@@ -71,6 +71,7 @@ Traps that cost real debugging time, all encoded below:
     primitive #1 rather than an afterthought.
 """
 
+import math
 import re
 import uuid
 
@@ -107,6 +108,7 @@ __all__ = [
     "live_place_connection_symbol",
     "live_place_corner",
     "live_place_tnode",
+    "live_place_connected",
 ]
 
 
@@ -2546,6 +2548,7 @@ def _pick(catalog, directions, symbol, kind, variant_nr=None):
         return None, catalog
 
     syms = catalog.get("symbols") or []
+    rivals = len(syms)
     if symbol:
         syms = [s for s in syms if s.get("symbol") == symbol]
         if not syms:
@@ -2578,6 +2581,8 @@ def _pick(catalog, directions, symbol, kind, variant_nr=None):
         }
 
     s = syms[0]
+    chosen_from = ("named by the caller out of %d symbols facing %s"
+                   % (rivals, directions)) if (symbol and rivals > 1) else None
     variants = s.get("matchingVariants") or []
     if not variants:
         return None, {
@@ -2595,7 +2600,11 @@ def _pick(catalog, directions, symbol, kind, variant_nr=None):
                                       ", ".join(str(v) for v in variants)),
                 "candidates": [s],
             }
-        return (s, variant_nr), None
+        why = ("variant %s named by the caller out of %d that face %s"
+               % (variant_nr, len(variants), directions))
+        if chosen_from:
+            why = "%s/%s %s; %s" % (s["library"], s["symbol"], chosen_from, why)
+        return (s, variant_nr, why), None
 
     if len(variants) > 1:
         by_nr = {v["variantNr"]: v for v in (s.get("variants") or [])}
@@ -2618,7 +2627,11 @@ def _pick(catalog, directions, symbol, kind, variant_nr=None):
             "variantOffsets": detail,
             "ambiguous": True,
         }
-    return (s, variants[0]), None
+    if chosen_from:
+        return (s, variants[0], "%s/%s %s" % (s["library"], s["symbol"],
+                                              chosen_from)), None
+    return (s, variants[0], "the only %s in this project with a variant facing "
+                            "%s" % (kind, directions)), None
 
 
 def live_place_corner(page: str, x: float, y: float, directions: list,
@@ -2682,7 +2695,7 @@ def live_place_corner(page: str, x: float, y: float, directions: list,
                             variant_nr=variant_nr)
     if problem:
         return problem
-    sym, vnr = picked
+    sym, vnr, why = picked
 
     out = live_place_connection_symbol(
         page, sym["library"], sym["symbol"], x, y, variant_nr=vnr,
@@ -2692,8 +2705,7 @@ def live_place_corner(page: str, x: float, y: float, directions: list,
         out["chosen"] = {"library": sym["library"], "symbol": sym["symbol"],
                          "variantNr": vnr, "type": sym.get("type"),
                          "directions": directions,
-                         "why": "the only Routing symbol in this project with a "
-                                "variant facing %s" % (directions,)}
+                         "why": why}
     return out
 
 
@@ -2752,7 +2764,7 @@ def live_place_tnode(page: str, x: float, y: float, branch_direction: str,
         problem["branchDirection"] = d
         problem["symbolType"] = stype
         return problem
-    sym, vnr = picked
+    sym, vnr, why = picked
 
     out = live_place_connection_symbol(
         page, sym["library"], sym["symbol"], x, y, variant_nr=vnr,
@@ -2762,6 +2774,255 @@ def live_place_tnode(page: str, x: float, y: float, branch_direction: str,
         out["chosen"] = {"library": sym["library"], "symbol": sym["symbol"],
                          "variantNr": vnr, "type": stype,
                          "branchDirection": d, "directions": legs,
-                         "why": "the only %s in this project with a variant "
-                                "facing %s" % (stype, legs)}
+                         "why": why}
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 13. Place a device already lined up with something on the page
+# ---------------------------------------------------------------------------
+
+OPPOSITE_DIRECTION = {"Up": "Down", "Down": "Up", "Left": "Right", "Right": "Left"}
+
+_HELPERS_ONESYM = r'''
+    // The connection points of ONE named symbol variant, straight out of the
+    // library. live_routing_catalog reads the same thing, but only walks
+    // CONNECTION symbols; this has to answer for a device.
+    static Dictionary<string, object> ReadVariantPins(object project, string libName,
+                                                      string symName, int variantNr)
+    {
+        Type libType = FindType("Eplan.EplApi.DataModel.MasterData.SymbolLibrary");
+        Type symType = FindType("Eplan.EplApi.DataModel.MasterData.Symbol");
+        Type varType = FindType("Eplan.EplApi.DataModel.MasterData.SymbolVariant");
+
+        object lib = libType.GetConstructor(new Type[] { project.GetType(), typeof(string) })
+            .Invoke(new object[] { project, libName });
+        object sym = null;
+        try
+        {
+            sym = symType.GetConstructor(new Type[] { libType, typeof(string) })
+                .Invoke(new object[] { lib, symName });
+        }
+        catch (TargetInvocationException tie)
+        { throw new Exception("Cannot open symbol " + symName + " in " + libName + ": " +
+            Flatten(tie.InnerException)); }
+        if (sym == null || PropText(sym, "IsValid") != "True")
+            throw new Exception("Symbol " + symName + " does not resolve in " + libName + ".");
+
+        object variant = null;
+        try
+        {
+            variant = varType.GetConstructor(new Type[] { symType, typeof(int) })
+                .Invoke(new object[] { sym, variantNr });
+        }
+        catch (TargetInvocationException tie)
+        { throw new Exception("Symbol " + symName + " has no variant " + variantNr + ": " +
+            Flatten(tie.InnerException)); }
+
+        Dictionary<string, object> d = new Dictionary<string, object>();
+        d["library"] = libName;
+        d["symbol"] = symName;
+        d["variantNr"] = variantNr;
+        d["type"] = PropText(sym, "Type");
+        d["pins"] = VariantPins(variant);
+        return d;
+    }
+'''
+
+
+def live_place_connected(page: str, to_handle: str, to_pin: int,
+                         library: str, symbol: str, distance: float,
+                         variant_nr: int = 0, new_pin: int = None,
+                         allow_real_project: bool = False,
+                         timeout_seconds: float = 120.0) -> dict:
+    """
+    Place a device already lined up to autoconnect with a pin on the page.
+    WRITES - scratch-only by default.
+
+    This is the tool that removes coordinate arithmetic from schematic
+    authoring. You say "put a contact 40mm below -K1's pin 2"; it works out
+    where the symbol has to sit so its own pin faces that one across a shared
+    axis, which is the condition EPLAN needs to draw an autoconnecting line.
+
+    No line is drawn, and none should be. Two facing pins on a shared axis ARE
+    the connection - `generate_connections` then materialises a logical
+    Connection between them. Verified live: -K1 -> corner -> -K2 laid out this
+    way produced one connection, `+-K1[2] -> +-K2[1]`.
+
+    How the new symbol is oriented is NOT decided here. `variant_nr` is the
+    rotation - measured on `NFPA_symbol_en_US/SL`, v0 faces Up/Down and v1 faces
+    Left/Right - and the variant you pass must actually have a pin facing back
+    toward the anchor, or this refuses. Picking a rotation for you would be
+    guessing at the drawing's intent.
+
+    Args:
+        page: Page the anchor is on. The new symbol goes on the same page.
+        to_handle: Handle of the placement to line up with, from
+            `live_place_symbol` or `live_read_page`. Session-scoped.
+        to_pin: Which of its pins, by index, as `live_read_page` reports them.
+            That pin's `direction` sets the axis and which way the run goes.
+        library, symbol: The symbol to place.
+        distance: Millimetres between the two PINS, measured along the run.
+            Must be positive and a whole multiple of the page grid - an
+            off-grid pin looks correct and refuses to autoconnect. The
+            placement location is derived from this, not passed.
+        variant_nr: Rotation of the new symbol, default 0.
+        new_pin: Which pin of the new symbol faces the anchor. Needed only when
+            the chosen variant has more than one pin facing that way; with
+            exactly one, it is inferred.
+        allow_real_project: Must be True to write outside the scratch root.
+        timeout_seconds: Default 120s - this reads the symbol library first.
+
+    Returns:
+        The `live_place_symbol` result, plus "alignment": the anchor pin, the
+        new pin, the shared axis, and the location that was solved for.
+
+    Refuses rather than placing something that will not connect: a pin with no
+    direction, a variant with no pin facing back, an ambiguous choice of pin, or
+    a distance that is not a grid multiple.
+    """
+    try:
+        page_cs = cs_text(page, "page")
+        handle_cs = cs_text(to_handle, "to_handle")
+        lib_cs = cs_text(library, "library")
+        sym_cs = cs_text(symbol, "symbol")
+        to_pin = cs_int(to_pin, "to_pin", minimum=0)
+        variant_nr = cs_int(variant_nr, "variant_nr", minimum=0)
+        if new_pin is not None:
+            new_pin = cs_int(new_pin, "new_pin", minimum=0)
+        distance = cs_double(distance, "distance")
+    except SchematicValueError as exc:
+        return _err(exc)
+
+    try:
+        dist = float(distance)
+    except (TypeError, ValueError):
+        return {"success": False, "error": "distance must be a number."}
+    if dist <= 0:
+        return {"success": False,
+                "error": "distance must be positive - it is the gap between the two "
+                         "pins along the run. The DIRECTION comes from the anchor "
+                         "pin, not from the sign."}
+
+    # Read the anchor pin and the candidate symbol's pins in one round trip.
+    probe_body = '''            object page = FindPage(project, PAGENAME);
+            object anchor = ResolveOnPage(page, ANCHORH);
+            results["page"] = PropText(page, "Name");
+            object grid = TryRead(page, "GridSize", null);
+            results["gridSize"] = grid == null ? 0.0 : Convert.ToDouble(grid);
+            results["anchor"] = DumpPlacement(anchor, true);
+            results["candidate"] = ReadVariantPins(project, LIBNAME, SYMNAME, VARNR);
+'''
+    probe_body = _fill(
+        probe_body,
+        PAGENAME='"%s"' % cs_escape(page_cs),
+        ANCHORH='"%s"' % cs_escape(handle_cs),
+        LIBNAME='"%s"' % cs_escape(lib_cs),
+        SYMNAME='"%s"' % cs_escape(sym_cs),
+        VARNR=str(variant_nr),
+    )
+    probe = _shape(_execute_script(
+        _script(_cls("AlignProbe"), probe_body,
+                extra_helpers=_HELPERS_SCHEMATIC + _HELPERS_ROUTING + _HELPERS_ONESYM),
+        timeout=timeout_seconds,
+    ))
+    if not probe.get("success"):
+        return probe
+
+    anchor = probe.get("anchor") or {}
+    anchor["pins"] = absolute_pins(anchor)
+    apins = anchor.get("pins") or []
+    match = [p for p in apins if p.get("index") == to_pin]
+    if not match:
+        return {"success": False,
+                "error": "Placement %s has no pin %d. Its pins: %s."
+                         % (to_handle, to_pin,
+                            ", ".join(str(p.get("index")) for p in apins) or "none")}
+    apin = match[0]
+
+    direction = apin.get("direction")
+    if direction not in OPPOSITE_DIRECTION:
+        return {"success": False,
+                "error": "Pin %d of %s reports direction %r, so there is no axis to "
+                         "line up along. A pin with no direction cannot autoconnect."
+                         % (to_pin, to_handle, direction)}
+    if apin.get("point") is None:
+        return {"success": False,
+                "error": "Pin %d of %s has no resolved position (frame %r), so where "
+                         "to put the new symbol cannot be computed. Treating it as "
+                         "(0,0) would place the device on the page origin."
+                         % (to_pin, to_handle, apin.get("frame"))}
+
+    grid = probe.get("gridSize") or 0.0
+    if grid > 0.0001:
+        steps = dist / grid
+        if abs(steps - round(steps)) > 1e-6:
+            return {"success": False,
+                    "error": "distance %g is not a multiple of the page grid %g "
+                             "(%.3f steps). An off-grid pin looks correct on screen "
+                             "and refuses to autoconnect. Nearest multiples: %g or %g."
+                             % (dist, grid, steps,
+                                math.floor(steps) * grid,
+                                math.ceil(steps) * grid)}
+
+    # The new symbol must have a pin facing BACK along the run.
+    want_back = OPPOSITE_DIRECTION[direction]
+    cand = probe.get("candidate") or {}
+    cpins = cand.get("pins") or []
+    facing = [i for i, p in enumerate(cpins) if p.get("direction") == want_back]
+    if not facing:
+        return {"success": False,
+                "error": "%s/%s variant %d has no pin facing %s, so nothing of it "
+                         "would face pin %d of %s (which faces %s). Its pins face: "
+                         "%s. variant_nr is the rotation - try another."
+                         % (library, symbol, variant_nr, want_back, to_pin,
+                            to_handle, direction,
+                            ", ".join(str(p.get("direction")) for p in cpins) or "nothing"),
+                "candidatePins": cpins}
+    if new_pin is not None:
+        if new_pin not in facing:
+            return {"success": False,
+                    "error": "Pin %d of %s/%s variant %d does not face %s. The pins "
+                             "that do: %s."
+                             % (new_pin, library, symbol, variant_nr, want_back,
+                                ", ".join(str(i) for i in facing))}
+        chosen_pin = new_pin
+    elif len(facing) > 1:
+        return {"success": False,
+                "error": "%s/%s variant %d has %d pins facing %s (indices %s). Which "
+                         "one should meet pin %d of %s is not something this can "
+                         "derive - pass new_pin."
+                         % (library, symbol, variant_nr, len(facing), want_back,
+                            ", ".join(str(i) for i in facing), to_pin, to_handle),
+                "candidatePins": cpins,
+                "ambiguous": True}
+    else:
+        chosen_pin = facing[0]
+
+    # Solve for the LOCATION. The pin offset is relative to it, so the location
+    # is the target pin position minus that offset.
+    ax, ay = apin["point"]["x"], apin["point"]["y"]
+    step = {"Up": (0.0, 1.0), "Down": (0.0, -1.0),
+            "Left": (-1.0, 0.0), "Right": (1.0, 0.0)}[direction]
+    tx, ty = ax + step[0] * dist, ay + step[1] * dist
+    off = cpins[chosen_pin].get("offset") or {}
+    loc_x, loc_y = tx - float(off.get("x", 0.0)), ty - float(off.get("y", 0.0))
+
+    out = live_place_symbol(page, library, symbol, loc_x, loc_y,
+                            variant_nr=variant_nr, snap_to_grid=False,
+                            allow_real_project=allow_real_project,
+                            timeout_seconds=timeout_seconds)
+    if out.get("success"):
+        out["alignment"] = {
+            "anchor": {"handle": to_handle, "pin": to_pin,
+                       "direction": direction, "point": {"x": ax, "y": ay}},
+            "placed": {"pin": chosen_pin, "direction": want_back,
+                       "point": {"x": tx, "y": ty}},
+            "axis": "y" if direction in ("Up", "Down") else "x",
+            "distance": dist,
+            "location": {"x": loc_x, "y": loc_y},
+            "note": "The two pins face each other on a shared axis, which is the "
+                    "whole connection - no line is drawn. Run generate_connections "
+                    "and read it back with live_read_connections.",
+        }
     return out

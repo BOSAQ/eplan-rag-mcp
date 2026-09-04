@@ -26,7 +26,7 @@ Use one of these whenever you are unsure of an exact action name or parameter �
 
 ## 2. The local `eplan` action server
 
-It exposes **213 tools** (full tool-by-tool reference: [the project wiki](https://github.com/covagashi/eplan-rag-mcp/wiki)):
+It exposes **214 tools** (full tool-by-tool reference: [the project wiki](https://github.com/covagashi/eplan-rag-mcp/wiki)):
 
 - **8 connection/utility tools**: `eplan_versions`, `eplan_servers`,
   `eplan_connect`, `eplan_status`, `eplan_ping`, `eplan_test`,
@@ -38,7 +38,7 @@ It exposes **213 tools** (full tool-by-tool reference: [the project wiki](https:
   4 live-DataModel tools (`eplan_live_query_functions`,
   `eplan_live_query_pages`, `eplan_live_set_function_text`,
   `eplan_live_set_connection_designations`) that read/edit the open project's
-  object model via runtime reflection (see §4 below), 10 schematic-authoring
+  object model via runtime reflection (see §4 below), 11 schematic-authoring
   tools on that same reflection scaffold (`eplan_live_symbol_catalog`,
   `eplan_live_create_page`, `eplan_live_place_symbol`,
   `eplan_live_connect_pins`, `eplan_live_read_page`,
@@ -57,7 +57,9 @@ It exposes **213 tools** (full tool-by-tool reference: [the project wiki](https:
   for the diagonal case where devices share neither axis - NOT the way to wire a
   straight run, which needs no object at all) and the connection-symbol tools
   (`eplan_live_routing_catalog`, `eplan_live_place_connection_symbol`,
-  `eplan_live_place_corner`, `eplan_live_place_tnode`) - EPLAN wires two facing
+  `eplan_live_place_corner`, `eplan_live_place_tnode`,
+  `eplan_live_place_connected` - place a device already lined up to autoconnect
+  with a pin on the page, so the caller never computes a millimetre) - EPLAN wires two facing
   pins on a shared axis with an autoconnecting line and no object, so what
   actually has to be PLACED is the corners and branches, and which symbol that
   is has to be discovered rather than assumed: one measured project carries 24

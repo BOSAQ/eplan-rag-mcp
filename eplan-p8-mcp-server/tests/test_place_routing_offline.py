@@ -109,7 +109,10 @@ def test_the_device_placer_names_the_real_problem_with_a_routing_symbol(eplan):
     eplan["symbols"] = [CORNER]
     S.live_place_symbol("+P/1", "SPECIAL_en_US", "CO", 10.0, 20.0)
     cs = eplan["scripts"][-1]
-    assert "ROUTING_TYPES" in cs
+    # NOT `assert "ROUTING_TYPES" in cs` - that array is in the shared helpers
+    # now, so it is present in every schematic script and proves nothing. Check
+    # the preflight's own text.
+    assert "Function.Create cannot" in cs
     assert "live_place_connection_symbol" in cs
 
 
@@ -296,7 +299,23 @@ def test_a_variant_that_does_not_face_the_right_way_is_refused(eplan):
 def test_the_reason_for_the_choice_is_reported(eplan):
     eplan["symbols"] = [CORNER]
     out = S.live_place_corner("+P/1", 10.0, 20.0, ["Right", "Down"])
-    assert "only Routing symbol" in out["chosen"]["why"]
+    assert "the only" in out["chosen"]["why"]
+    assert "Routing" in out["chosen"]["why"]
+
+
+def test_the_reason_does_not_claim_uniqueness_the_caller_overrode(eplan):
+    """
+    With symbol= or variant_nr= passed there may well have been rivals, and
+    saying "the only one" would be a false statement about exactly the choice
+    this tool refuses to make on its own.
+    """
+    eplan["symbols"] = [TLRO, TLRO_1]
+    out = S.live_place_tnode("+P/1", 10.0, 20.0, "Up",
+                             symbol="TLRO_1", variant_nr=8)
+    why = out["chosen"]["why"]
+    assert "the only" not in why
+    assert "caller" in why
+    assert "2" in why, "the number of rivals it was chosen from is missing"
 
 
 # ---------------------------------------------------------------------------

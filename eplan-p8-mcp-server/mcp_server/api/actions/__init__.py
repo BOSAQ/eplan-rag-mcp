@@ -349,6 +349,7 @@ from .schematic import (
     live_place_connection_symbol,
     live_place_corner,
     live_place_tnode,
+    live_place_connected,
 )
 
 # GED interaction (start an interactive placement in the graphical editor)
@@ -486,7 +487,7 @@ __all__ = [
     'live_connect_pins', 'live_read_page', 'live_remove_placement',
     'live_verify_page', 'live_set_device_tag', 'live_read_connections',
     'live_connect_pins_routed', 'live_routing_catalog', 'live_place_connection_symbol',
-    'live_place_corner', 'live_place_tnode',
+    'live_place_corner', 'live_place_tnode', 'live_place_connected',
     # GED interaction
     'start_ged_interaction', 'insert_device', 'insert_symbol_reference',
     'select_device',

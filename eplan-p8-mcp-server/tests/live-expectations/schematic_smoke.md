@@ -21,7 +21,7 @@ described under "The sequence" below against the working tree (import
 
 | # | Call | Result |
 |---|---|---|
-| 1 | `live_symbol_catalog()` | 7 libraries: SPECIAL_en_US, Symbol Library - East River, Symbol Library - Special, GRAPHICS_en_US, Symbol Library - East River - Graphic, NFPA_symbol_en_US, Symbol Library - Graphics |
+| 1 | `live_symbol_catalog()` | 7 libraries: 4 stock (`SPECIAL_en_US`, `GRAPHICS_en_US`, `NFPA_symbol_en_US`, `Symbol Library - Special`) plus 3 site-specific ones, names redacted - a client's library names are not ours to publish, and only the COUNT matters here |
 | 2 | `live_symbol_catalog(library="NFPA_symbol_en_US")` | 12 symbols; `SL`, `S`, `O`, `SSV`, `SWR`, `ONE` have 2 connection points, `Q1` has 6 |
 | 3 | `live_symbol_catalog(library=..., symbol="SL")` | 9 variants, each with its pin list |
 | 4 | `live_create_page(location="MCPTEST", counter=777)` | page **`+MCPTEST/777`**, `pageType=Circuit`, `gridSize=3.175` |
