@@ -102,6 +102,7 @@ __all__ = [
     "live_verify_page",
     "live_set_device_tag",
     "live_read_connections",
+    "live_connect_pins_routed",
 ]
 
 
@@ -1032,6 +1033,46 @@ def live_place_symbol(page: str, library: str, symbol: str, x: float, y: float,
 # 4. Connect two pins
 # ---------------------------------------------------------------------------
 
+# The pin-resolution script, shared by the straight and routed writers.
+# Two readers would drift, and a routed wire that disagreed with a straight
+# one about where a pin is would be very hard to explain.
+_PROBE_BODY = '''            object page = FindPage(project, PAGENAME);
+            object a = ResolveOnPage(page, FROMH);
+            object b = ResolveOnPage(page, TOH);
+            object pinA = FindPinAt(a, FROMP);
+            object pinB = FindPinAt(b, TOP);
+
+            Dictionary<string, object> ra = new Dictionary<string, object>();
+            ra["placement"] = DumpPlacement(a, true);
+            object la = TryRead(pinA, "Location", null);
+            if (la != null) ra["pinRaw"] = PtDict(la);
+            results["from"] = ra;
+
+            Dictionary<string, object> rb = new Dictionary<string, object>();
+            rb["placement"] = DumpPlacement(b, true);
+            object lb = TryRead(pinB, "Location", null);
+            if (lb != null) rb["pinRaw"] = PtDict(lb);
+            results["to"] = rb;
+            results["page"] = PropText(page, "Name");
+'''
+
+
+def _probe_pins(page_cs, from_cs, to_cs, from_pin, to_pin, timeout_seconds):
+    """Resolve two pins to absolute page coordinates. Writes nothing."""
+    body = _fill(
+        _PROBE_BODY,
+        PAGENAME='"%s"' % page_cs,
+        FROMH='"%s"' % from_cs,
+        TOH='"%s"' % to_cs,
+        FROMP=str(from_pin),
+        TOP=str(to_pin),
+    )
+    return _shape(_execute_script(
+        _script(_cls("PinProbe"), body, extra_helpers=_HELPERS_SCHEMATIC),
+        timeout=timeout_seconds,
+    ))
+
+
 def live_connect_pins(page: str, from_handle: str, from_pin: int,
                       to_handle: str, to_pin: int,
                       allow_real_project: bool = False,
@@ -1080,39 +1121,10 @@ def live_connect_pins(page: str, from_handle: str, from_pin: int,
                 "error": "from and to are the same pin of the same placement; a "
                          "connection needs two distinct endpoints."}
 
-    # Step 1: resolve both pins WITHOUT writing, so the axis check happens on
-    # this side where it can be tested with EPLAN closed.
-    probe_body = '''            object page = FindPage(project, PAGENAME);
-            object a = ResolveOnPage(page, FROMH);
-            object b = ResolveOnPage(page, TOH);
-            object pinA = FindPinAt(a, FROMP);
-            object pinB = FindPinAt(b, TOP);
-
-            Dictionary<string, object> ra = new Dictionary<string, object>();
-            ra["placement"] = DumpPlacement(a, true);
-            object la = TryRead(pinA, "Location", null);
-            if (la != null) ra["pinRaw"] = PtDict(la);
-            results["from"] = ra;
-
-            Dictionary<string, object> rb = new Dictionary<string, object>();
-            rb["placement"] = DumpPlacement(b, true);
-            object lb = TryRead(pinB, "Location", null);
-            if (lb != null) rb["pinRaw"] = PtDict(lb);
-            results["to"] = rb;
-            results["page"] = PropText(page, "Name");
-'''
-    probe_body = _fill(
-        probe_body,
-        PAGENAME='"%s"' % page_cs,
-        FROMH='"%s"' % from_cs,
-        TOH='"%s"' % to_cs,
-        FROMP=str(from_pin),
-        TOP=str(to_pin),
-    )
-    probe = _shape(_execute_script(
-        _script(_cls("PinProbe"), probe_body, extra_helpers=_HELPERS_SCHEMATIC),
-        timeout=timeout_seconds,
-    ))
+    # Step 1: resolve both pins WITHOUT writing, so the geometry decision
+    # happens on this side where it can be tested with EPLAN closed.
+    probe = _probe_pins(page_cs, from_cs, to_cs, from_pin, to_pin,
+                        timeout_seconds)
     if not probe.get("success"):
         return probe
 
@@ -1828,4 +1840,192 @@ def live_read_connections(page: str = None, limit: int = 200,
                 "the lines drawn on it - regenerate if in doubt."
                 % (out.get("total", 0), page)
             )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 10. Route a connection through a corner
+# ---------------------------------------------------------------------------
+
+def live_connect_pins_routed(page: str, from_handle: str, from_pin: int,
+                             to_handle: str, to_pin: int,
+                             corner: str = "x",
+                             allow_real_project: bool = False,
+                             timeout_seconds: float = 120.0) -> dict:
+    """
+    Wire two pins that do NOT share an axis, via a corner. WRITES - scratch-only.
+
+    live_connect_pins draws ONE straight segment, so it refuses a diagonal - a
+    single sloped line is not a wire EPLAN treats as a connection. That is the
+    honest behaviour, but it means only devices that happen to share an X or a Y
+    can be wired, which does not survive contact with a real page layout.
+
+    This draws TWO segments through a right-angled corner, which is how a wire
+    is actually run on a schematic.
+
+    Args:
+        page: Page both placements are on.
+        from_handle, to_handle: Handles from live_place_symbol or
+            live_read_page. Session-scoped.
+        from_pin, to_pin: Pin indices, from live_read_page's "pins".
+        corner: Which way the elbow turns.
+            "x" - leave the FROM pin horizontally, arrive at the TO pin
+                  vertically. Corner sits at (to.x, from.y).
+            "y" - leave vertically, arrive horizontally. Corner at
+                  (from.x, to.y).
+            Pick the one whose corner does not land on top of another device;
+            the result reports the corner so you can check.
+        allow_real_project: Must be True to write outside the scratch root.
+        timeout_seconds: Default 120s - this is two writes plus a read-back.
+
+    Returns:
+        {"success", "page", "corner", "segments": [{"handle", "from", "to"}, ...],
+         "undo": {...}, "page_after"}
+
+        BOTH segment handles come back, so the undo is complete - removing only
+        one would leave half a wire behind, which is worse than leaving the whole
+        thing.
+
+        As with live_connect_pins this reports what was DRAWN. Whether EPLAN has
+        created a logical Connection is a separate question - use
+        live_read_connections after eplan_generate_connections.
+    """
+    try:
+        page_cs = cs_escape(cs_text(page, "page"))
+        from_cs = cs_escape(cs_text(from_handle, "from_handle"))
+        to_cs = cs_escape(cs_text(to_handle, "to_handle"))
+        from_pin = cs_int(from_pin, "from_pin", minimum=0)
+        to_pin = cs_int(to_pin, "to_pin", minimum=0)
+        corner = cs_text(corner, "corner").strip().lower()
+    except SchematicValueError as exc:
+        return _err(exc)
+
+    if corner not in ("x", "y"):
+        return {"success": False,
+                "error": "corner must be 'x' (leave horizontally, arrive "
+                         "vertically) or 'y' (leave vertically, arrive "
+                         "horizontally); got %r." % corner}
+    if from_handle == to_handle and from_pin == to_pin:
+        return {"success": False,
+                "error": "from and to are the same pin; a connection needs two "
+                         "distinct endpoints."}
+
+    # Resolve both pins first, exactly as live_connect_pins does, so the
+    # geometry decision happens on this side where it is testable offline.
+    probe = _probe_pins(page_cs, from_cs, to_cs, from_pin, to_pin,
+                        timeout_seconds)
+    if not probe.get("success"):
+        return probe
+    pa = _pin_point(probe.get("from"), from_pin)
+    pb = _pin_point(probe.get("to"), to_pin)
+    if pa is None or pb is None:
+        return {
+            "success": False,
+            "error": "Could not establish an absolute page coordinate for %s. A "
+                     "pin whose frame is unknown cannot be routed by index."
+                     % ("the 'from' pin" if pa is None else "the 'to' pin"),
+            "from": probe.get("from"), "to": probe.get("to"),
+        }
+
+    if pins_coincide(pa, pb):
+        return {"success": False,
+                "error": "Both pins are at the same point (%.4f, %.4f); there is "
+                         "nothing to route." % (pa["x"], pa["y"]),
+                "from_point": pa, "to_point": pb}
+
+    if axis_aligned(pa, pb):
+        return {
+            "success": False,
+            "error": (
+                "These pins already share an axis, so a corner would draw a "
+                "redundant elbow where a single segment does the job. Use "
+                "live_connect_pins instead."
+            ),
+            "from_point": pa, "to_point": pb,
+        }
+
+    elbow = ({"x": pb["x"], "y": pa["y"]} if corner == "x"
+             else {"x": pa["x"], "y": pb["y"]})
+
+    body = _guard_prelude(allow_real_project) + '''
+            object page = FindPage(project, PAGENAME);
+            Type dclType = FindType("Eplan.EplApi.DataModel.DynamicConnectionLine");
+            MethodInfo create = RequireMethod(dclType, "Create", new string[] { "Page" }, false);
+            MethodInfo setG = RequireMethod(dclType, "SetGraphics",
+                new string[] { "PointD", "PointD" }, false);
+            Type ptType = setG.GetParameters()[0].ParameterType;
+            results["boundSignature"] = setG.ToString();
+
+            // Two segments through the elbow. Each is anchored at its own start
+            // and drawn RELATIVE to that anchor - the same rule as the straight
+            // case, where passing absolute coordinates put one end at the page
+            // origin.
+            double[][] segs = new double[][] {
+                new double[] { AX, AY, CX, CY },
+                new double[] { CX, CY, BX, BY }
+            };
+
+            List<object> drawn = new List<object>();
+            foreach (double[] s in segs)
+            {
+                object dcl = Activator.CreateInstance(dclType);
+                Call(create, dcl, new object[] { page });
+
+                PropertyInfo locProp = GetWritable(dclType, "Location");
+                if (locProp == null)
+                    throw new Exception("DynamicConnectionLine has no writable " +
+                        "Location, so a segment cannot be anchored and would be " +
+                        "drawn from the page origin. " + MemberList(dclType, false));
+                locProp.SetValue(dcl, MakePoint(ptType, s[0], s[1]), null);
+                Call(setG, dcl, new object[] {
+                    MakePoint(ptType, 0.0, 0.0),
+                    MakePoint(ptType, s[2] - s[0], s[3] - s[1]) });
+
+                Dictionary<string, object> d = new Dictionary<string, object>();
+                d["handle"] = Handle(dcl);
+                d["from"] = PtDict(MakePoint(ptType, s[0], s[1]));
+                d["to"] = PtDict(MakePoint(ptType, s[2], s[3]));
+                drawn.Add(d);
+            }
+
+            results["page"] = PropText(page, "Name");
+            results["segments"] = drawn;
+            results["segmentCount"] = drawn.Count;
+            results["page_after"] = ReadPage(page, 200, true, null);
+'''
+    body = _fill(
+        body,
+        PAGENAME='"%s"' % page_cs,
+        AX=cs_double(pa["x"], "from x"),
+        AY=cs_double(pa["y"], "from y"),
+        BX=cs_double(pb["x"], "to x"),
+        BY=cs_double(pb["y"], "to y"),
+        CX=cs_double(elbow["x"], "corner x"),
+        CY=cs_double(elbow["y"], "corner y"),
+    )
+
+    out = _shape(_execute_script(
+        _script(_cls("Routed"), body, extra_helpers=_HELPERS_SCHEMATIC),
+        timeout=timeout_seconds,
+    ))
+    if out.get("success"):
+        _annotate_pins(out)
+        out["from_point"] = pa
+        out["to_point"] = pb
+        out["corner"] = elbow
+        out["cornerMode"] = corner
+        handles = [s.get("handle") for s in (out.get("segments") or [])
+                   if s.get("handle")]
+        if handles:
+            # BOTH handles: removing one would leave half a wire, which is
+            # worse than leaving the whole thing.
+            out["undo"] = {"tool": "eplan_live_remove_placement",
+                           "page": out.get("page"), "handles": handles,
+                           "note": "Remove BOTH segments; one alone leaves half "
+                                   "a wire on the page."}
+        out["scopeNote"] = (
+            "Two graphical segments were drawn through the corner. Whether "
+            "EPLAN has created a LOGICAL connection is a separate question - "
+            "run eplan_generate_connections then live_read_connections."
+        )
     return out

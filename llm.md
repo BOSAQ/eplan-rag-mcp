@@ -26,12 +26,12 @@ Use one of these whenever you are unsure of an exact action name or parameter �
 
 ## 2. The local `eplan` action server
 
-It exposes **208 tools** (full tool-by-tool reference: [the project wiki](https://github.com/covagashi/eplan-rag-mcp/wiki)):
+It exposes **209 tools** (full tool-by-tool reference: [the project wiki](https://github.com/covagashi/eplan-rag-mcp/wiki)):
 
 - **8 connection/utility tools**: `eplan_versions`, `eplan_servers`,
   `eplan_connect`, `eplan_status`, `eplan_ping`, `eplan_test`,
   `eplan_disconnect`, `eplan_list_extensions`.
-- **196 EPLAN action tools** → `eplan_<action>` (e.g. `eplan_open_project`).
+- **197 EPLAN action tools** → `eplan_<action>` (e.g. `eplan_open_project`).
   Includes 5 discovery tools (`eplan_settings_list_children`,
   `eplan_list_schemes`, `eplan_list_report_templates`, `eplan_list_layers`,
   `eplan_list_enums`) that enumerate real EPLAN catalogs instead of guessing,
@@ -52,7 +52,9 @@ It exposes **208 tools** (full tool-by-tool reference: [the project wiki](https:
   because it would MERGE devices) and `eplan_live_read_connections` (the LOGICAL
   connections - what is actually wired to what, as opposed to where a line was
   drawn; read-only, and it reports when connections look ungenerated rather than
-  letting an empty list read as "nothing is wired"), application lifecycle
+  letting an empty list read as "nothing is wired") and
+  `eplan_live_connect_pins_routed` (two segments through a right-angled corner,
+  so devices that share neither axis can still be wired), application lifecycle
   control (`eplan_app_launch`, `eplan_app_shutdown`, `eplan_app_restart` —
   full exit/relaunch/reconnect/reopen cycles for unattended add-in
   deploy-test loops), scratch project fixtures
