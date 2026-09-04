@@ -4,7 +4,8 @@ Complete implementation with all documented parameters.
 """
 
 from typing import List, Optional
-from ._base import _get_connected_manager, _build_action, _execute_with_quiet_mode, _quote_param
+from ._base import (_get_connected_manager, _build_action,
+                    _execute_with_quiet_mode, _execute_and_report_written)
 
 
 def export_pdf_project(
@@ -39,6 +40,13 @@ def export_pdf_project(
     settings_get_string("USER.PDFExportGUI.SCHEMAS.LastUsed"). Pass an
     explicit export_scheme whenever the output filename matters, and verify
     the file on disk afterwards rather than trusting success:true.
+
+    The result says which files were really written. requestedFile is what you
+    asked for, requestedFileWritten says whether that exact basename appeared
+    or changed, and writtenFiles lists every file that changed in the target
+    directory during the call. When the requested basename is absent, note
+    explains it. If the directory could not be listed, verification says so
+    rather than claiming nothing was written.
 
     Args:
         export_file: Output PDF file path. The directory is honoured; the
@@ -82,7 +90,7 @@ def export_pdf_project(
         params["USEPRINTMARGINS"] = use_print_margins
 
     action = _build_action("export", **params)
-    return _execute_with_quiet_mode(action)
+    return _execute_and_report_written(action, export_file)
 
 
 def export_pdf_pages(
@@ -113,6 +121,13 @@ def export_pdf_pages(
     the caller only found out by listing the directory. Read the fallback with
     settings_get_string("USER.PDFExportGUI.SCHEMAS.LastUsed"), pass an explicit
     export_scheme when the filename matters, and check the file on disk.
+
+    The result says which files were really written. requestedFile is what you
+    asked for, requestedFileWritten says whether that exact basename appeared
+    or changed, and writtenFiles lists every file that changed in the target
+    directory during the call. When the requested basename is absent, note
+    explains it. If the directory could not be listed, verification says so
+    rather than claiming nothing was written.
 
     Args:
         export_file: Output PDF file path. Directory honoured; basename can be
@@ -168,7 +183,7 @@ def export_pdf_pages(
         for i, sel in enumerate(page_identifiers, 1):
             parts.append(f"/SEL{i}:{sel}")
 
-    return _execute_with_quiet_mode(" ".join(parts))
+    return _execute_and_report_written(" ".join(parts), export_file)
 
 
 def export_dxf_project(
@@ -512,16 +527,24 @@ def export_pxf_project(
     Export project in EPJ/PXF format.
     Action: export
 
+    EPLAN appends the extension itself, so the file on disk is normally NOT
+    the basename you passed. The result reports the difference rather than
+    echoing the request back: requestedFile, requestedFileWritten, and
+    writtenFiles - every file that changed in the target directory during
+    the call. Unlike the PDF wrappers this has not been measured live; the
+    shape of the mutation is taken from EPLAN's own documented behaviour.
+
     Args:
         export_file: Output file path (extension added automatically)
         project_name: Project path (optional)
         export_masterdata: Include master data (default True)
         export_connections: Include connections (default False)
     """
-    manager, error = _get_connected_manager()
-    if error:
-        return error
-
+    # The _get_connected_manager() guard that stood here is gone, not
+    # moved: _execute_and_report_written performs the same check, and
+    # holding a manager here only to ignore it left the wrapper looking
+    # like it still executed the action itself. Same shape as the two
+    # PDF wrappers now.
     action = _build_action(
         "export",
         TYPE="PXFPROJECT",
@@ -530,7 +553,7 @@ def export_pxf_project(
         EXPORTMASTERDATA=export_masterdata,
         EXPORTCONNECTIONS=export_connections
     )
-    return manager.execute_action(action)
+    return _execute_and_report_written(action, export_file)
 
 
 def export_3d(
