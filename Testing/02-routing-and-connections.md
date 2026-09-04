@@ -16,11 +16,22 @@ line:
 | Four-way crossing | `RoutingCross` | `CR` |
 | Hop over, no connection | `RoutingBridge` | `BR` |
 | Free/diagonal routing | `DynamicRouting` | `CRL` |
+| Cross-page jump | `InterruptionPoint` | `BP` (seen live tagged `-0V60`) |
+| Wire number / colour / gauge | `ConnectionDefinition` | `CDP` family (19 variants — see below) |
 
 All confirmed live via `eplan_live_routing_catalog()` against this project —
 matched exactly against a user-supplied screenshot of the same short-name /
 number / description table from EPLAN's own symbol browser, which is strong
 independent corroboration that these names are stable for this install.
+`05-external-symbol-dataset.md` cross-checked the same names a *third* way,
+against a public Hugging Face dataset, and the numeric ids agree exactly
+(`TLRU`=64, `TOUR`=66, `TOUL`=67, `BR`=68, `CR`=69, `CO`=70, `CRL`=71,
+`TLRO`=72, `BP`=8) — three independent sources landing on the same numbers is
+about as confirmed as a symbol name gets without EPLAN's own docs saying so
+directly. That same cross-check also surfaced 19 `CDP*` variants
+(`ConnectionDefinitionPoint`) with real ids — `CDP` itself is 308, plus
+no-graphic forms, optical-fibre, and a piping-specific `CDPCP2F1`–`F5`
+family — none of which had been enumerated from this project directly.
 
 **A corner's two connection points sit at the exact same coordinate as the
 corner itself** — placing one *is* placing both pins; one `(x,y)` positions
