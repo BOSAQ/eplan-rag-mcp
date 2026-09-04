@@ -149,24 +149,22 @@ Long remote scripts give weak completion signals. Robust patterns:
 - Action names and parameters are case-sensitive strings with zero compile-time checking — a typo fails silently or at runtime. Verify against the RAG.
 - Ports are dynamic; process name is `W3u`; EPLAN 2025 needs "Remote Client Access" enabled (see remoting.md).
 
-## 9. Don't `RegisterScript` a one-shot `[Start]` script
+## 9. A "hung" or timed-out script may just be a swallowed compile error
 
-`RegisterScript` installs a script's *persistent* hooks (`[DeclareAction]`/
-`[DeclareEventHandler]`/`[DeclareRegister]`, see script-basics.md). A
-generated script that only has `[Start]` has none of those, so
-`RegisterScript`ing it before `ExecuteScript` accomplishes nothing but an
-EPLAN-side warning ("The script does not contain attributes for loading")
-and two extra remote-API round-trips (register + unregister) per call —
-measured at roughly 44% of total run time for a small script. Call
-`ExecuteScript` alone for one-shot scripts; reserve `RegisterScript`/
-`UnregisterScript` for scripts you're actually loading persistently.
+If a generated script never returns / never produces its result and nothing
+in the script logic looks slow, don't reach for RAM, project size, or a stuck
+lock as the first theory. A script that fails to compile never runs at all,
+so any host that waits for a result artifact (file, callback, whatever) just
+sees a timeout — indistinguishable from a genuine hang until you check
+EPLAN's own message tree (`SysMessagesCollection`, item 4 above) for a
+`CS####`-prefixed entry naming the generated source file. See
+`e3d-installation-spaces.md`'s Pitfalls section for a live-reproduced example
+where this was mistaken for a RAM problem and then a project-size problem
+across 5 attempts before the real cause (an invalid `using`) turned up in the
+message tree.
 
-## 10. A compile error looks exactly like a hang — and the C# level is version-specific
-
-**The part that is always true:** a compile error is invisible to the caller.
-Everything below is about spotting it.
-
-**The part that depends on your version:** on **2026** the script engine
+### Which C# the engine accepts depends on the version
+ on **2026** the script engine
 compiles with a **pre-C# 6** compiler, verified by probe — `?.` gives
 `CS1525`, and `new Dictionary<string, object> { ["a"] = 1 }` gives
 `CS1525: Invalid expression term '['`. On **2027** a direct probe compiled
@@ -252,3 +250,15 @@ Two related notes:
 - A *runtime* exception inside `[Start]` is a different failure with the same
   outward symptom (no result file). Wrap the body in try/catch and write the
   exception into the result file, so the two cases stay distinguishable.
+
+## 10. Don't `RegisterScript` a one-shot `[Start]` script
+
+`RegisterScript` installs a script's *persistent* hooks (`[DeclareAction]`/
+`[DeclareEventHandler]`/`[DeclareRegister]`, see script-basics.md). A
+generated script that only has `[Start]` has none of those, so
+`RegisterScript`ing it before `ExecuteScript` accomplishes nothing but an
+EPLAN-side warning ("The script does not contain attributes for loading")
+and two extra remote-API round-trips (register + unregister) per call —
+measured at roughly 44% of total run time for a small script. Call
+`ExecuteScript` alone for one-shot scripts; reserve `RegisterScript`/
+`UnregisterScript` for scripts you're actually loading persistently.

@@ -4,8 +4,8 @@ Complete implementation with all documented parameters.
 """
 
 from typing import List, Optional
-from ._base import (_get_connected_manager, _build_action,
-                    _execute_with_quiet_mode, _execute_and_report_written)
+from ._base import (_get_connected_manager, _build_action, _execute_with_quiet_mode,
+                    _quote_param, _execute_and_report_written)
 
 
 def export_pdf_project(
@@ -558,30 +558,55 @@ def export_pxf_project(
 
 def export_3d(
     destination_path: str,
+    type: str,
     project_name: str = None,
-    format: str = None,
-    installation_space: str = None
+    installation_space: str = None,
+    export_scheme: str = None,
+    separate_files: bool = None,
+    filename: str = None
 ) -> dict:
     """
     Export installation spaces to 3D formats.
     Action: export3d
 
+    Live-verified 2026-09-04 (2025.0.3, Pro Panel licensed): the previous
+    wrapper sent FORMAT/INSTALLATIONSPACE, neither a real export3d parameter,
+    and never sent the mandatory TYPE - EPLAN answered every call with
+    "Este proceso no es compatible." and nothing was written. See Audit #42
+    item 1.
+
     Args:
-        destination_path: Output directory
-        project_name: Project path (optional)
-        format: 3D export format
-        installation_space: Specific installation space to export
+        destination_path: Output directory. Created if it does not exist.
+        type: "STEP" or "JT". Mandatory - the action has no default and
+            silently rejects the call without it.
+        project_name: Project path (optional). Required if there is no
+            project with focus in the EPLAN GUI.
+        installation_space: Name of the layout space to export. If omitted,
+            the entire project is exported.
+        export_scheme: Export scheme (optional). Only effective with
+            type="STEP"; if omitted the last-used scheme applies.
+        separate_files: Write one file per installation space instead of a
+            single combined file (optional). Only effective with type="STEP".
+        filename: Output file name (optional). Only effective with
+            type="JT".
     """
     manager, error = _get_connected_manager()
     if error:
         return error
 
+    if type not in ("STEP", "JT"):
+        return {"success": False,
+                "error": f"type must be 'STEP' or 'JT', got {type!r}."}
+
     action = _build_action(
         "export3d",
+        TYPE=type,
         PROJECTNAME=project_name,
         DESTINATIONPATH=destination_path,
-        FORMAT=format,
-        INSTALLATIONSPACE=installation_space
+        INSTALLATIONSPACENAME=installation_space,
+        EXPORTSCHEME=export_scheme,
+        SEPARATEFILES=separate_files,
+        FILENAME=filename
     )
     return manager.execute_action(action)
 

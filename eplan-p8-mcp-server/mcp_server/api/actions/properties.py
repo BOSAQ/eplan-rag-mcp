@@ -194,9 +194,14 @@ def export_user_properties(export_file: str, project_name: str = None) -> dict:
     Export user properties to file.
     Action: XEsUserPropertiesExportAction
 
+    Live-verified 2026-09-04: the previous wrapper sent PROJECTNAME/EXPORTFILE,
+    neither a real parameter of this action - it documents XMLFile and
+    Project. Audit #42 item 2.
+
     Args:
-        export_file: Output file path
-        project_name: Project path (optional)
+        export_file: Output XML file path.
+        project_name: Full project name/path (optional). If omitted, the
+            selected project is used or EPLAN shows a project picker.
     """
     manager, error = _get_connected_manager()
     if error:
@@ -204,20 +209,30 @@ def export_user_properties(export_file: str, project_name: str = None) -> dict:
 
     action = _build_action(
         "XEsUserPropertiesExportAction",
-        PROJECTNAME=project_name,
-        EXPORTFILE=export_file
+        Project=project_name,
+        XMLFile=export_file
     )
     return manager.execute_action(action)
 
 
-def import_user_properties(import_file: str, project_name: str = None) -> dict:
+def import_user_properties(import_file: str, project_name: str = None,
+                           overwrite: bool = None) -> dict:
     """
     Import user properties from file.
     Action: XEsUserPropertiesImportAction
 
+    Live-verified 2026-09-04: the previous wrapper sent PROJECTNAME/IMPORTFILE,
+    neither a real parameter of this action - it documents XMLFile and
+    Project. Audit #42 item 2.
+
     Args:
-        import_file: Input file path
-        project_name: Project path (optional)
+        import_file: Input XML file path. If omitted, EPLAN shows a file
+            picker.
+        project_name: Full project name/path (optional). If omitted, the
+            selected project is used or EPLAN shows a project picker.
+        overwrite: Overwrite existing properties (optional). If omitted,
+            EPLAN shows a confirmation dialog - pass this explicitly for an
+            unattended call.
     """
     manager, error = _get_connected_manager()
     if error:
@@ -225,7 +240,8 @@ def import_user_properties(import_file: str, project_name: str = None) -> dict:
 
     action = _build_action(
         "XEsUserPropertiesImportAction",
-        PROJECTNAME=project_name,
-        IMPORTFILE=import_file
+        Project=project_name,
+        XMLFile=import_file,
+        Overwrite=overwrite
     )
     return manager.execute_action(action)

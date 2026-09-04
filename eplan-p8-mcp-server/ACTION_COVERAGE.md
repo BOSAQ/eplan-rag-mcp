@@ -183,6 +183,52 @@ A contributor whose installation includes Pro Panel, or who has a project
 containing preplanning data, can verify the first four and report back; the
 docstrings say precisely what to run.
 
+### Contributor report: EPLAN 2025.0.3 Electric P8 with Pro Panel (2026-09-03)
+
+A second, independent installation (not the 2027.0.1 reference above — 2027.0.1
+is not installed there) does have Pro Panel licensed, and was used to follow up
+on exactly the invitation above. Numbers below are from that install; they do
+not change or re-measure anything stated for the 2027.0.1 reference — read them
+as a second data point, not a correction.
+
+- **The 3D gate itself is not a general "Electric P8 lacks Pro Panel" limit —
+  it's per-installation.** `XCabCreateInstallationSpace` (headless,
+  `InstallationSpace.Create`) succeeded outright against a disposable scratch
+  clone. So the prerequisite the four 3D/planning actions share is satisfiable
+  on some Electric P8 installs, just not the one this document was measured
+  against.
+- **`XAMlExportProductionData2RASCenterAction`: executed, and it works.**
+  Ran against the same scratch project with a real `FileName`; it produced a
+  15.3 MB AutomationML file at the given path. This is the first live
+  execution of this action recorded anywhere in this document — worth
+  promoting out of "shipped but not live-verified" once the docstring's `NOT
+  VERIFIED` block is updated to cite it.
+- **`XAMlExportProductionData2SmartMountingAction`: executed, still fails.**
+  `success:false`, no message surfaced (neither in the return value nor in
+  `eplan_get_system_messages`) — consistent with the RAS Center sibling now
+  working, this failure is *not* the 3D prerequisite. Given the action has no
+  documentation page anywhere (confirmed above by the wiki sweep), the
+  strongest remaining hypothesis is still what this doc already says: the
+  inferred parameter name(s) are wrong, or the action name itself is not a
+  real, callable action on this EPLAN version.
+- **`XPlaUpdateDetailAction`: executed, returned `success:true` — but
+  inconclusively.** The scratch project (a parts/3D-macro bulk-import
+  project, not a preplanning one) had zero preplanning objects, same
+  precondition gap as the reference install, but the *outcome differs*: a
+  silent successful no-op here vs. a failure inside `PlanningLog` on the
+  reference install. That discrepancy is itself worth a note in the
+  docstring — a caller cannot currently tell "processed 0 objects
+  successfully" apart from "processed some objects successfully" from the
+  return value alone on at least one of the two installations.
+- **`InsertModelViewAction`: still not exercised.** Not blocked by the 3D
+  prerequisite this time (the gate works here) — blocked on finding an
+  existing page name to pass as the mandatory `PAGENAME`, headless, without a
+  reliable non-interactive page-listing or page-creation path in the current
+  tool surface. `execute_custom_script` was tried for this and hit an
+  unrelated, separately-reported issue (compile-error timeouts — see the
+  `eplan-development` skill's `pitfalls.md` #9), so this one is a tooling gap
+  in the test harness, not a finding about the action itself.
+
 **An important caveat on availability data.** `ActionManager.FindAction`
 resolving an action means its module is *loaded*, **not** that it is licensed to
 run: module licensing is enforced at execution time. All five actions above

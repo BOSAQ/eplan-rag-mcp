@@ -203,10 +203,19 @@ def eplan_ping() -> str:
     return json.dumps(manager.ping(), indent=2)
 
 
-def eplan_test() -> str:
+def eplan_test(show_dialog: bool = False) -> str:
     """
-    Show a MessageBox in EPLAN to verify the connection is working.
-    Creates and executes a temporary C# script.
+    Verify the connection by compiling and running a real C# script in EPLAN.
+
+    Args:
+        show_dialog: Show a MessageBox in the EPLAN GUI instead of the
+            default non-interactive round-trip (default False).
+            MessageBox.Show is a Windows dialog, not an EPLAN one, so
+            QuietMode cannot suppress it: setting this True BLOCKS this
+            server - and every other caller waiting on it - until a human
+            clicks OK in the EPLAN window. Audit #42 item 10. Leave False
+            unless you specifically want the visible confirmation and are
+            prepared to go click it yourself.
     """
     manager = get_manager()
 
@@ -216,12 +225,13 @@ def eplan_test() -> str:
             "message": "Not connected. Call eplan_connect() first."
         }, indent=2)
 
-    # Create test script
-    scripts_dir = os.path.join(SCRIPT_DIR, "scripts")
-    os.makedirs(scripts_dir, exist_ok=True)
-    script_path = os.path.join(scripts_dir, "mcp_test.cs")
+    if show_dialog:
+        # Create test script
+        scripts_dir = os.path.join(SCRIPT_DIR, "scripts")
+        os.makedirs(scripts_dir, exist_ok=True)
+        script_path = os.path.join(scripts_dir, "mcp_test.cs")
 
-    script = '''using System.Windows.Forms;
+        script = '''using System.Windows.Forms;
 using Eplan.EplApi.Scripting;
 
 public class MCPTest
@@ -238,17 +248,52 @@ public class MCPTest
     }
 }
 '''
-    with open(script_path, 'w', encoding='utf-8') as f:
-        f.write(script)
+        with open(script_path, 'w', encoding='utf-8') as f:
+            f.write(script)
 
-    # Execute only - a [Start]-only script needs no RegisterScript; it just makes
-    # EPLAN report "The script does not contain attributes for loading."
-    # ExecuteScript compiles and runs [Start] by itself (see scripted.py).
-    result = manager.execute_action(f'ExecuteScript /ScriptFile:"{script_path}"')
+        # Execute only - a [Start]-only script needs no RegisterScript; it just
+        # makes EPLAN report "The script does not contain attributes for loading."
+        # ExecuteScript compiles and runs [Start] by itself (see scripted.py).
+        result = manager.execute_action(f'ExecuteScript /ScriptFile:"{script_path}"')
 
+        return json.dumps({
+            "success": result.get("success", False),
+            "message": "Check EPLAN for MessageBox" if result.get("success") else result.get("message")
+        }, indent=2)
+
+    # Default path: the same liveness proof, without blocking. Round-trips
+    # through the ordinary generated-script machinery (scripted._execute_script)
+    # instead of hand-building an ExecuteScript call, so this also exercises
+    # compile-and-run the same way every other scripted tool does.
+    from api.actions.scripted import _execute_script
+
+    script = '''using System;
+using System.Collections.Generic;
+using System.IO;
+using Eplan.EplApi.Scripting;
+
+public class MCPTest
+{
+    [Start]
+    public void Run()
+    {
+        var results = new Dictionary<string, object>();
+        results["success"] = true;
+        results["message"] = "MCP Connection OK";
+        string json = Newtonsoft.Json.JsonConvert.SerializeObject(results, Newtonsoft.Json.Formatting.Indented);
+        File.WriteAllText(@"{{RESULT_PATH}}", json);
+    }
+}
+'''
+    outcome = _execute_script(script)
+    if outcome.get("success"):
+        return json.dumps({
+            "success": True,
+            "message": outcome.get("results", {}).get("message", "MCP Connection OK"),
+        }, indent=2)
     return json.dumps({
-        "success": result.get("success", False),
-        "message": "Check EPLAN for MessageBox" if result.get("success") else result.get("message")
+        "success": False,
+        "message": outcome.get("error") or outcome.get("message") or "script did not report success",
     }, indent=2)
 
 
@@ -475,14 +520,35 @@ def strip_schema_boilerplate(app):
     if os.environ.get("EPLAN_MCP_KEEP_SCHEMA_TITLES") == "1":
         return 0
 
+    # Keys whose value is a MAP of {name: schema} rather than a schema node
+    # itself - "properties" chief among them. Walking into one of these must
+    # recurse into its VALUES, never call node.pop() on the map dict itself,
+    # because its keys are parameter/definition NAMES. Audit #42 item 11: a
+    # parameter literally named `title` had its entire schema entry deleted
+    # from `properties` (while `required` still named it), because the old
+    # prune() popped "title" from every dict it walked with no way to tell a
+    # schema node from the map that holds several of them.
+    #
+    # This must be decided fresh at each level from "which key did the PARENT
+    # use to reach this dict", never by inspecting the dict's own shape or
+    # name - a parameter can itself be named `properties` (a real one exists:
+    # a generic user-properties dict), and its OWN schema node (which legitimately
+    # has an auto-generated "title" to strip) must not be mistaken for the
+    # `properties` map merely because of how it happens to be reached.
+    _SCHEMA_MAPS = {"properties", "$defs", "definitions", "patternProperties"}
+
     def prune(node):
         if isinstance(node, dict):
             node.pop("title", None)
-            # Only null defaults: "default": 0 or "" or False is real information.
+            # Only null defaults: "default": 0/""/False is real information.
             if "default" in node and node["default"] is None:
                 node.pop("default")
-            for value in node.values():
-                prune(value)
+            for key, value in node.items():
+                if key in _SCHEMA_MAPS and isinstance(value, dict):
+                    for sub in value.values():
+                        prune(sub)
+                else:
+                    prune(value)
         elif isinstance(node, list):
             for value in node:
                 prune(value)
