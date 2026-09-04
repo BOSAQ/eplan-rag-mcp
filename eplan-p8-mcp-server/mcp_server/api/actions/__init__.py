@@ -330,6 +330,19 @@ from .live import (
     live_set_connection_designations,
 )
 
+# Schematic authoring - the WRITE side of the live object model: create pages,
+# place devices at coordinates, wire them, read the result back. Rides the same
+# reflection scaffold as live.py. Writes are scratch-only unless the caller
+# explicitly passes allow_real_project=True.
+from .schematic import (
+    live_symbol_catalog,
+    live_create_page,
+    live_place_symbol,
+    live_connect_pins,
+    live_read_page,
+    live_remove_placement,
+)
+
 # GED interaction (start an interactive placement in the graphical editor)
 from .interaction import (
     start_ged_interaction,
@@ -461,6 +474,8 @@ __all__ = [
     # Live DataModel
     'live_query_functions', 'live_query_pages', 'live_set_function_text',
     'live_set_connection_designations',
+    'live_symbol_catalog', 'live_create_page', 'live_place_symbol',
+    'live_connect_pins', 'live_read_page', 'live_remove_placement',
     # GED interaction
     'start_ged_interaction', 'insert_device', 'insert_symbol_reference',
     'select_device',

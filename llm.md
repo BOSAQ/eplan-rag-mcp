@@ -26,19 +26,26 @@ Use one of these whenever you are unsure of an exact action name or parameter �
 
 ## 2. The local `eplan` action server
 
-It exposes **199 tools** (full tool-by-tool reference: [the project wiki](https://github.com/covagashi/eplan-rag-mcp/wiki)):
+It exposes **205 tools** (full tool-by-tool reference: [the project wiki](https://github.com/covagashi/eplan-rag-mcp/wiki)):
 
 - **8 connection/utility tools**: `eplan_versions`, `eplan_servers`,
   `eplan_connect`, `eplan_status`, `eplan_ping`, `eplan_test`,
   `eplan_disconnect`, `eplan_list_extensions`.
-- **187 EPLAN action tools** → `eplan_<action>` (e.g. `eplan_open_project`).
+- **193 EPLAN action tools** → `eplan_<action>` (e.g. `eplan_open_project`).
   Includes 5 discovery tools (`eplan_settings_list_children`,
   `eplan_list_schemes`, `eplan_list_report_templates`, `eplan_list_layers`,
   `eplan_list_enums`) that enumerate real EPLAN catalogs instead of guessing,
   4 live-DataModel tools (`eplan_live_query_functions`,
   `eplan_live_query_pages`, `eplan_live_set_function_text`,
   `eplan_live_set_connection_designations`) that read/edit the open project's
-  object model via runtime reflection (see §4 below), application lifecycle
+  object model via runtime reflection (see §4 below), 6 schematic-authoring
+  tools on that same reflection scaffold (`eplan_live_symbol_catalog`,
+  `eplan_live_create_page`, `eplan_live_place_symbol`,
+  `eplan_live_connect_pins`, `eplan_live_read_page`,
+  `eplan_live_remove_placement`) that CREATE a schematic rather than only
+  reading one - every write returns the page read-back as proof and an undo
+  handle, and writes refuse a project outside the scratch root unless
+  `allow_real_project=True`, application lifecycle
   control (`eplan_app_launch`, `eplan_app_shutdown`, `eplan_app_restart` —
   full exit/relaunch/reconnect/reopen cycles for unattended add-in
   deploy-test loops), scratch project fixtures
