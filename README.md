@@ -2,6 +2,7 @@
 
 **English** · [中文](README.zh-CN.md) · [Русский](README.ru.md)
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/covagashi/eplan-rag-mcp)
 [![MCP Badge](https://lobehub.com/badge/mcp/covagashi-eplan_2026_ia_mcp_scripts)](https://lobehub.com/mcp/covagashi-eplan_2026_ia_mcp_scripts)
 
 AI-assisted automation for **EPLAN Electric P8** and **EPLAN EEC Pro 2026**, built on the

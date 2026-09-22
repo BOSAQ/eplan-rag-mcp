@@ -1,0 +1,302 @@
+{
+  "repo_notes": [
+    {
+      "content": ""
+    }
+  ],
+  "pages": [
+    {
+      "title": "Overview",
+      "purpose": "What the EPLAN AI Automation Toolkit is: a local MCP server bridging LLMs to EPLAN Electric plus remote Cloudflare RAG documentation servers. Repo layout, components, links to child pages.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Getting Started & Configuration",
+      "purpose": "Installing, registering the MCP server with Claude, EPLAN remoting settings, environment variables (EPLAN_MCP_MODE, EPLAN_MCP_LOG_DIR, EPLAN_MCP_EXTENSIONS, MCP_TRANSPORT), requirements.txt.",
+      "parent": "Overview",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Tool Catalog and LLM Guidance (llm.md)",
+      "purpose": "The full published tool surface, discovery vs full mode, safety policy and usage conventions documented for the model.",
+      "parent": "Overview",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "MCP Server Core",
+      "purpose": "Overview of the local Python MCP server: startup, transports, tool registration, extensions; links to children.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Server Entrypoint & Tool Registry",
+      "purpose": "server.py bootstrap, dynamic tool registration from actions __all__, schema slimming, discovery-mode meta tools, extension loading.",
+      "parent": "MCP Server Core",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "EPLAN Connection Manager",
+      "purpose": "eplan_connection.py: version detection, pythonnet/CLR loading, remote client connect/ping/disconnect, execute_action, quiet-mode C# wrapper generation, message shaping, actions.jsonl tracing.",
+      "parent": "MCP Server Core",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "C# Script Execution Pipeline",
+      "purpose": "How Python builds, writes, and runs generated C# scripts; result JSON IPC, compile-error detection via the system message tree, script register/execute/unregister, audit of custom scripts, C#5 constraints.",
+      "parent": "MCP Server Core",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Security Guards & Safety Policy",
+      "purpose": "Scratch-project guard, UNC path rejection, backup guards, destructive-action confirmation, script auditing.",
+      "parent": "MCP Server Core",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "EPLAN Action API",
+      "purpose": "Overview of the api/actions package: the flat re-export namespace, _base helpers, and the functional domains covered by child pages.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Project Lifecycle, Backup & Application Control",
+      "purpose": "open/close/manage projects, upgrade/compress/synchronize, backup & restore, app launch/shutdown/restart, workspace, scratch fixtures.",
+      "parent": "EPLAN Action API",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Import, Export & Reporting",
+      "purpose": "PDF/DXF/DWG/PXF/graphics export, imports, print, reports, data exchange, device lists, labels, cabinet/3D and production outputs.",
+      "parent": "EPLAN Action API",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Editing: Generate, Renumber, Translate, Macros, Search & Navigation",
+      "purpose": "connection/cable generation, renumbering, translation, macro handling, searching, GED navigation and interaction, layers, PLC, verification.",
+      "parent": "EPLAN Action API",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Scripted API: Parts DB, Settings, PathMap, Diagnostics",
+      "purpose": "scripted.py deep dive — MDPartsManagement queries/CRUD, typed Settings getters/setters, PathMap substitution, system messages, execute_custom_script.",
+      "parent": "EPLAN Action API",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Action Catalog, Ribbon & Introspection",
+      "purpose": "Mined action registry from MFTools.xml, eplan_action_catalog/describe/run, ribbon catalog, API type introspection, discovery helpers.",
+      "parent": "EPLAN Action API",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Asset Administration Shell (AAS) Integration",
+      "purpose": "aas package: builder, mapping, client, export/import of parts and projects as AASX digital-twin packages.",
+      "parent": "EPLAN Action API",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Live DataModel & Schematic Authoring",
+      "purpose": "Overview of the live object-model subsystem: runtime reflection scaffolding, reads, writes, and geometric routing; links to children.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Runtime Reflection Layer (live.py)",
+      "purpose": "Why using-directives fail (CS0234), assembly resolution and *Netu twins, LockingStep, SelectionSet, function/page queries, property writes, check messages.",
+      "parent": "Live DataModel & Schematic Authoring",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Schematic Write Primitives (schematic.py)",
+      "purpose": "live_create_page, place_symbol, connect_pins, read_page, verify_page, set_device_tag, remove_placement; placement model and read-back invariants.",
+      "parent": "Live DataModel & Schematic Authoring",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Routing, Connection Symbols & Catalogs",
+      "purpose": "Symbol.Type/PinBase.Direction semantics, corners/T-nodes, routed connections, catalog enumeration and the sparse SymbolId gap fix.",
+      "parent": "Live DataModel & Schematic Authoring",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Testing & Validation",
+      "purpose": "Overview of the offline/live test strategy and validation tooling; links to children.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Offline Test Suite",
+      "purpose": "conftest fixtures and mocking of script execution; offline tests for scripts, schematic, live, security, discovery mode, coverage counts, cs escaping.",
+      "parent": "Testing & Validation",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Live Expectations",
+      "purpose": "Documented live-behavior contracts (execute_script_compile.md, schematic_smoke.md) and live tests requiring a running EPLAN.",
+      "parent": "Testing & Validation",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Developer Tooling (tools/)",
+      "purpose": "build_action_registry.py, validate_actions.py, probe_live_actions.py, capture_ribbon_labels.py, generate_wiki_pages.py and their JSON data artifacts.",
+      "parent": "Testing & Validation",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Remote RAG Documentation Servers",
+      "purpose": "Overview of the three Cloudflare Worker MCP endpoints serving EPLAN documentation; links to children.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Semantic RAG Workers (EPLAN P8 2026 & EEC Pro)",
+      "purpose": "Vectorize + bge-base semantic search workers, their MCP tools, REST endpoints, migration/ingest scripts and wrangler config.",
+      "parent": "Remote RAG Documentation Servers",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Keyword FTS5 Worker (EPLAN 2027 API Wiki)",
+      "purpose": "D1 + FTS5/bm25 worker, schema.sql, ingest.py, tools eplan2027_search/get/stats, re-ingest workflow.",
+      "parent": "Remote RAG Documentation Servers",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Deployment & CI",
+      "purpose": "GitHub Actions deploy-cloudflare workflow, wrangler deployment, plugin marketplace manifest, funding/license.",
+      "parent": "Remote RAG Documentation Servers",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Field Research Notes (Testing/)",
+      "purpose": "Overview of the empirical EPLAN behavior notebooks in Testing/ and their supporting tools.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Schematic Authoring Findings",
+      "purpose": "Notes on authoring primitives, routing/connections, coordinate system & designations, interactive vs scripted placement, MacroBox reflection, page replication.",
+      "parent": "Field Research Notes (Testing/)",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Analysis Tools & Pipelines",
+      "purpose": "page_to_ascii renderer, symbol inventory builder, image-to-schematic pipeline and fixtures.",
+      "parent": "Field Research Notes (Testing/)",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    }
+  ]
+}
