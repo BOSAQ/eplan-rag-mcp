@@ -15,6 +15,7 @@ import json
 import time
 import uuid
 from typing import Optional, List
+from cs_json import prepare_script
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("EPLAN")
@@ -76,7 +77,7 @@ def detect_installed_versions() -> list:
             bin_dir = os.path.join(PLATFORM_ROOT, name, "Bin")
             if not os.path.exists(os.path.join(bin_dir, "Eplan.EplApi.RemoteClientu.dll")):
                 continue
-            major = name.split(".")[0]
+            major = "2.9" if re.match(r"^2\.9(?:\.|$)", name) else name.split(".")[0]
             runtime = "coreclr" if os.path.exists(os.path.join(bin_dir, "Grpc.Net.Client.dll")) else "netfx"
             entry = {"version": major, "full_version": name, "bin": bin_dir, "runtime": runtime}
             if major not in installs or _version_key(name) > _version_key(installs[major]["full_version"]):
@@ -217,7 +218,7 @@ def eplan_pids() -> list:
         return []
 
 
-def eplan_listening_ports(only_pids=None) -> list:
+def eplan_listening_ports(only_pids=None, pids=None) -> list:
     """TCP ports EPLAN.exe processes are LISTENING on (via netstat).
 
     Fallback discovery: GetActiveEplanServersOnLocalMachine is unreliable
@@ -232,9 +233,11 @@ def eplan_listening_ports(only_pids=None) -> list:
             PIDs (any iterable, coerced to a set). Used by app_launch to tell
             the instance it just started apart from one that was already
             running - see Audit #42 item 12.
+        pids: Already-computed result of eplan_pids(). If given, skips the
+            internal tasklist spawn.
     """
     import subprocess
-    pids = set(eplan_pids())
+    pids = set(eplan_pids() if pids is None else pids)
     if not pids:
         return []
     if only_pids is not None:
@@ -256,6 +259,43 @@ def eplan_listening_ports(only_pids=None) -> list:
     except Exception:
         pass
     return ports
+
+
+
+def call_with_timeout(func, timeout_seconds, *args, **kwargs):
+    """
+    Run a blocking call with a deadline. Returns (result, timed_out, error).
+
+    Every EplanRemoteClient call except Connect() is an unbounded synchronous
+    call into the CLR. When EPLAN cannot service it - a human mid-edit, a modal
+    dialog, a project that will not close - the call never returns, and with it
+    goes the tool that made it AND this server's ability to answer anything
+    else. Measured 2026-09-11: StopEplan() blocked for 8m44s while a human had
+    a project open, and the session's only recovery was restarting the server.
+
+    The worker is a daemon thread and is deliberately NOT joined after the
+    timeout: it is stuck in native code and cannot be interrupted. Letting it
+    leak is the lesser evil - the alternative is hanging forever, which is the
+    bug being fixed. It ends when the process does.
+    """
+    import threading
+
+    box = {}
+
+    def run():
+        try:
+            box["value"] = func(*args, **kwargs)
+        except BaseException as e:      # noqa: BLE001 - reported, not swallowed
+            box["error"] = e
+
+    worker = threading.Thread(target=run, daemon=True,
+                              name=f"eplan-call-{getattr(func, '__name__', 'anon')}")
+    worker.start()
+    worker.join(timeout_seconds)
+
+    if worker.is_alive():
+        return None, True, None
+    return box.get("value"), False, box.get("error")
 
 
 class EPLANConnectionManager:
@@ -470,20 +510,34 @@ class EPLANConnectionManager:
             self.connected = False
             return {"success": False, "message": self.last_error}
 
-    def ping(self) -> dict:
-        """Check if EPLAN is responding."""
+    def ping(self, timeout_seconds: float = 15.0) -> dict:
+        """
+        Check if EPLAN is responding.
+
+        Bounded on purpose. TIMEOUT_SECONDS applies to Connect() only - every
+        other remoting call is an unbounded synchronous CLR call, so a wedged
+        EPLAN turns the health check itself into a hang, and the one tool whose
+        job is to answer "is it alive?" must always answer.
+        """
         if not self.connected or not self.client:
             return {"alive": False, "message": "Not connected"}
 
-        try:
-            alive = self.client.Ping()
-            return {
-                "alive": alive,
-                "message": "EPLAN responding" if alive else "No response"
-            }
-        except Exception as e:
+        alive, timed_out, error = call_with_timeout(self.client.Ping, timeout_seconds)
+        if timed_out:
+            # Not marked disconnected: the client may still be valid and EPLAN
+            # merely busy (a modal dialog, a long redraw). Saying so is more
+            # useful than guessing either way.
+            return {"alive": False, "timed_out": True,
+                    "message": f"EPLAN did not answer Ping within {timeout_seconds}s - "
+                               "it is running but not servicing remoting calls "
+                               "(a modal dialog or a long operation will do this)"}
+        if error is not None:
             self.connected = False
-            return {"alive": False, "message": f"Ping failed: {e}"}
+            return {"alive": False, "message": f"Ping failed: {error}"}
+        return {
+            "alive": bool(alive),
+            "message": "EPLAN responding" if alive else "No response"
+        }
 
     @staticmethod
     def _shape_messages(result: dict) -> dict:
@@ -727,7 +781,7 @@ class EPLANConnectionManager:
                     escaped_result_path, escaped_action_name,
                 )
                 with open(script_path, "w", encoding="utf-8") as f:
-                    f.write(script_content)
+                    f.write(prepare_script(script_content, self.target_version))
                 return self._run_generated_script(action, script_path, result_path, started)
 
             # C# Script Content.
@@ -972,7 +1026,7 @@ public class QuietExecute_{exec_id}
 }}
 """
             with open(script_path, "w", encoding="utf-8") as f:
-                f.write(script_content)
+                f.write(prepare_script(script_content, self.target_version))
             return self._run_generated_script(action, script_path, result_path, started)
 
         except Exception as e:
@@ -1142,8 +1196,9 @@ public class QuietExecute_{exec_id}
             # Read results, tolerating a partially-written file (the C# writer
             # is not atomic vs our existence probe).
             res_data = None
-            for _ in range(10):
-                time.sleep(0.05)
+            for attempt in range(10):
+                if attempt:
+                    time.sleep(0.05)
                 try:
                     with open(result_path, "r", encoding="utf-8") as f:
                         res_data = json.load(f)
