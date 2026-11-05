@@ -39,12 +39,20 @@ Use one of these whenever you are unsure of an exact action name or parameter �
 
 ## 2. The local `eplan` action server
 
-It exposes **217 tools** (full tool-by-tool reference: [the project wiki](https://github.com/covagashi/eplan-rag-mcp/wiki)):
+It exposes **220 tools** (full tool-by-tool reference: [the project wiki](https://github.com/covagashi/eplan-rag-mcp/wiki)):
 
 - **8 connection/utility tools**: `eplan_versions`, `eplan_servers`,
   `eplan_connect`, `eplan_status`, `eplan_ping`, `eplan_test`,
   `eplan_disconnect`, `eplan_list_extensions`.
-- **200 EPLAN action tools** → `eplan_<action>` (e.g. `eplan_open_project`).
+- **203 EPLAN action tools** → `eplan_<action>` (e.g. `eplan_open_project`).
+  Includes 3 tools built on API members new in EPLAN 2027, reached by
+  reflection so older versions get a clear "new in 2027" error:
+  `eplan_live_read_terminal_jumpers` (terminal jumpers/bridges via
+  `Terminal.GetJumpers`), `eplan_parts_db_export_edz` (export named parts,
+  with their referenced data, to an EDZ file) and
+  `eplan_remove_unused_user_properties` (preview, then remove unused
+  user-defined property definitions from the project or the parts
+  database; project writes are scratch-guarded).
   Includes 5 discovery tools (`eplan_settings_list_children`,
   `eplan_list_schemes`, `eplan_list_report_templates`, `eplan_list_layers`,
   `eplan_list_enums`) that enumerate real EPLAN catalogs instead of guessing,
