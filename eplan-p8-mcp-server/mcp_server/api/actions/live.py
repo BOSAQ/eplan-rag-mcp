@@ -5,9 +5,9 @@ The action-based tools in this package drive EPLAN, but they cannot enumerate
 or mutate the object model of the loaded project: `using Eplan.EplApi.DataModel;`
 does not compile inside EPLAN's script engine (CS0234 - the engine compiles
 against a fixed assembly set). The technique that does work is runtime
-reflection over the object model, documented in the eplan-development skill's
-[API data access](https://github.com/covagashi/eplan-development-skill/blob/main/skills/eplan-p8/eplan-development/references/api-data-access.md) and
-[3D installation spaces](https://github.com/covagashi/eplan-development-skill/blob/main/skills/eplan-p8/eplan-development/references/e3d-installation-spaces.md)
+reflection over the object model, documented in the eplan-scripting skill's
+[API data access](https://github.com/Canary-ECAD/eplan-scripting-skill/blob/main/skills/eplan-p8/eplan-scripting/references/api-data-access.md) and
+[3D installation spaces](https://github.com/Canary-ECAD/eplan-scripting-skill/blob/main/skills/eplan-p8/eplan-scripting/references/e3d-installation-spaces.md)
 guides. Hold a `LockingStep` for the duration (without it every project access
 throws NoLockingStepException), and use `SelectionSet.GetCurrentProject(false)`
 to reach the project without ProjectManager.
@@ -683,7 +683,11 @@ def live_query_pages(contains: str = None, limit: int = 100,
 
     Returns:
         dict with "pages" (list of {"name": ..., "pageType": ...}),
-        "matched", "returned".
+        "matched", "returned". On EPLAN 2027 and later each page also carries
+        "lastModifiedBy" (Page.LastModificator), and the result carries
+        "currentUser" (Project.CurrentUserName) - so you can tell who last
+        touched a page and whether that was the person running this session.
+        Both are omitted on older versions, where the members do not exist.
     """
     # limit is interpolated into the C# source outside any string literal, so
     # it must be a real integer - anything else would be code injection.
@@ -711,9 +715,18 @@ def live_query_pages(contains: str = None, limit: int = 100,
                     d["name"] = name == null ? "" : name;
                     string pt = PropText(pg, "PageType");
                     d["pageType"] = pt == null ? "" : pt;
+                    // Page.LastModificator is new in EPLAN 2027. Read it
+                    // reflectively so the same script still compiles and runs
+                    // on 2026, where the member simply does not exist.
+                    string lm = SafeText(TryRead(pg, "LastModificator", null));
+                    if (!string.IsNullOrEmpty(lm)) d["lastModifiedBy"] = lm;
                     list.Add(d);
                 }
             }
+
+            // Project.CurrentUserName is new in EPLAN 2027 as well.
+            string cu = SafeText(TryRead(project, "CurrentUserName", null));
+            if (!string.IsNullOrEmpty(cu)) results["currentUser"] = cu;
 
             results["success"] = true;
             results["matched"] = matched;

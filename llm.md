@@ -5,11 +5,11 @@ It assumes you are connected through one or more of the MCP servers described he
 
 The local `eplan` action server is maintained in this repository. The three
 Cloudflare documentation RAG servers are maintained separately in
-[eplan-cloudflare-rags](https://github.com/covagashi/eplan-cloudflare-rags):
-[P8 2026](https://github.com/covagashi/eplan-cloudflare-rags/tree/main/cloudflare-rag-eplan-p8),
-[P8 2027](https://github.com/covagashi/eplan-cloudflare-rags/tree/main/cloudflare-rag-eplan-2027),
-and [EEC Pro 2026](https://github.com/covagashi/eplan-cloudflare-rags/tree/main/cloudflare-rag-eecpro).
-The [eplan-development skill](https://github.com/covagashi/eplan-development-skill)
+[eplan-cloudflare-rags](https://github.com/Canary-ECAD/eplan-cloudflare-rags):
+[P8 2026](https://github.com/Canary-ECAD/eplan-cloudflare-rags/tree/main/cloudflare-rag-eplan-p8),
+[P8 2027](https://github.com/Canary-ECAD/eplan-cloudflare-rags/tree/main/cloudflare-rag-eplan-2027),
+and [EEC Pro 2026](https://github.com/Canary-ECAD/eplan-cloudflare-rags/tree/main/cloudflare-rag-eecpro).
+The [eplan-scripting skill](https://github.com/Canary-ECAD/eplan-scripting-skill)
 also has its own repository.
 
 Human-readable guides: [English](README.md) · [Español](README.es.md) ·
@@ -39,12 +39,20 @@ Use one of these whenever you are unsure of an exact action name or parameter �
 
 ## 2. The local `eplan` action server
 
-It exposes **217 tools** (full tool-by-tool reference: [the project wiki](https://github.com/covagashi/eplan-rag-mcp/wiki)):
+It exposes **220 tools** (full tool-by-tool reference: [covaga.dev/docs/tools](https://covaga.dev/docs/tools/project-and-workspace-management/)):
 
 - **8 connection/utility tools**: `eplan_versions`, `eplan_servers`,
   `eplan_connect`, `eplan_status`, `eplan_ping`, `eplan_test`,
   `eplan_disconnect`, `eplan_list_extensions`.
-- **200 EPLAN action tools** → `eplan_<action>` (e.g. `eplan_open_project`).
+- **203 EPLAN action tools** → `eplan_<action>` (e.g. `eplan_open_project`).
+  Includes 3 tools built on API members new in EPLAN 2027, reached by
+  reflection so older versions get a clear "new in 2027" error:
+  `eplan_live_read_terminal_jumpers` (terminal jumpers/bridges via
+  `Terminal.GetJumpers`), `eplan_parts_db_export_edz` (export named parts,
+  with their referenced data, to an EDZ file) and
+  `eplan_remove_unused_user_properties` (preview, then remove unused
+  user-defined property definitions from the project or the parts
+  database; project writes are scratch-guarded).
   Includes 5 discovery tools (`eplan_settings_list_children`,
   `eplan_list_schemes`, `eplan_list_report_templates`, `eplan_list_layers`,
   `eplan_list_enums`) that enumerate real EPLAN catalogs instead of guessing,
@@ -166,7 +174,8 @@ EPLAN's own UI and two wasted remote-API round-trips per call).
    specific one. If `eplan_servers` returns `[]` the connection usually still
    works — that empty list is a known limitation (especially right after EPLAN
    starts), not a failure: `eplan_connect` falls back to the TCP ports
-   EPLAN.exe actually listens on (via netstat), then the default 49152. To
+   EPLAN.exe actually listens on (read from Windows' TCP table, so it works in
+   any Windows language), then the default 49152. To
    reach EPLAN on another machine pass `host` (port required then).
 2. **Pick the project context.** Most actions take an optional `project_name`. If
    omitted, EPLAN uses the **currently selected/open** project. Use
