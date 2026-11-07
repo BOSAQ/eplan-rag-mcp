@@ -1472,6 +1472,163 @@ def live_remove_placement(page: str, handle: str = None,
     ))
 
 
+# Prefixes this short would select (nearly) every page of a project.
+_TOO_BROAD_PREFIXES = {"=", "+", "&", "/", "-", "#"}
+
+
+def live_remove_pages(prefixes, expected_project: str, dry_run: bool = True,
+                      max_pages: int = 200, allow_real_project: bool = False,
+                      timeout_seconds: float = 300.0) -> dict:
+    """
+    Remove every page whose name starts with one of `prefixes`, in bulk.
+    WRITES (unless dry_run) - scratch-only by default.
+
+    Built for trimming a copied project down to one part of it, e.g. deleting
+    the =U1 and =U2 skids from a copy of a full plant so only =MCP remains -
+    work that live_remove_placement(remove_page=True) would need one call (and
+    one full page read) per page for.
+
+    Guards, all enforced inside the script against the LIVE project:
+      - expected_project must equal the current project's .elk path
+        (case-insensitive). The live tools act on whichever project is current
+        in EPLAN, so this is what stops a bulk delete hitting the wrong one.
+      - dry_run defaults to True: the call only reports what would be removed.
+      - Refuses when more than max_pages pages match, and refuses outright when
+        the prefixes match EVERY page of the project.
+      - The usual scratch guard; allow_real_project=True is needed for a real
+        project.
+
+    Matching is a plain ordinal StartsWith on the full page name, so "=U1"
+    also matches "=U10+..."; add the separator ("=U1+") when that matters, and
+    read the dry-run list before deleting.
+
+    Page removal is not reliably undoable through the API. Back up or copy the
+    project first.
+
+    Args:
+        prefixes: One page-name prefix or a list of them, e.g. ["=U1", "=U2"].
+        expected_project: Full path of the .elk that must be the current project.
+        dry_run: True (default) to list matches without removing anything.
+        max_pages: Refuse if more pages than this match (default 200).
+        allow_real_project: Must be True to write outside the scratch root.
+        timeout_seconds: Default 300s.
+
+    Returns:
+        {"success", "project", "pages_before", "matched" (names), "dry_run",
+         and when not a dry run: "removed" (names), "pages_after"}.
+    """
+    if isinstance(prefixes, str):
+        prefixes = [prefixes]
+    if not isinstance(prefixes, (list, tuple)) or not prefixes:
+        return {"success": False, "error": "prefixes must be a non-empty list of page-name prefixes."}
+    try:
+        clean = []
+        for p in prefixes:
+            p = cs_text(p, "prefix").strip()
+            if len(p) < 2 or p in _TOO_BROAD_PREFIXES:
+                raise SchematicValueError(
+                    "prefix %r is too broad: it would match (nearly) every page." % p)
+            clean.append(p)
+        expected = cs_text(expected_project, "expected_project").strip()
+        if not expected.lower().endswith(".elk"):
+            raise SchematicValueError("expected_project must be the full path of a .elk file.")
+        max_pages = int(max_pages)
+        if max_pages < 1:
+            raise SchematicValueError("max_pages must be at least 1.")
+    except (SchematicValueError, TypeError, ValueError) as exc:
+        return _err(exc)
+
+    prefixes_cs = ", ".join('"%s"' % cs_escape(p) for p in clean)
+    body = _guard_prelude(allow_real_project) + '''
+            string expected = EXPECTED.Replace("/", "\\\\").ToUpperInvariant();
+            string current = null;
+            foreach (string pn in new string[] { "ProjectLinkFilePath", "ProjectFullName" })
+            {
+                string v = SafeText(TryRead(project, pn, null));
+                if (!string.IsNullOrEmpty(v)) { current = v; break; }
+            }
+            if (current == null)
+                throw new Exception("Cannot read the current project's path - refusing to remove pages.");
+            results["projectPath"] = current;
+            if (current.Replace("/", "\\\\").ToUpperInvariant() != expected)
+                throw new Exception("REFUSING: the current project is '" + current +
+                    "', not the expected '" + EXPECTED + "'. Make the expected project " +
+                    "current in EPLAN (open it / select it in the page navigator) and retry.");
+
+            string[] prefixes = new string[] { PREFIXES };
+            Type finderType = FindType("Eplan.EplApi.DataModel.DMObjectsFinder");
+            object finder = Activator.CreateInstance(finderType, new object[] { project });
+            Type filterType = FindType("Eplan.EplApi.DataModel.PagesFilter");
+            object filter = Activator.CreateInstance(filterType);
+            MethodInfo getPages = RequireMethod(finderType, "GetPages",
+                new string[] { filterType.Name }, false);
+            IEnumerable pages = (IEnumerable)Call(getPages, finder, new object[] { filter });
+
+            List<object> targets = new List<object>();
+            List<string> matched = new List<string>();
+            int total = 0;
+            foreach (object pg in pages)
+            {
+                if (pg == null) continue;
+                total++;
+                string n = PropText(pg, "Name");
+                if (n == null) continue;
+                foreach (string pre in prefixes)
+                {
+                    if (n.StartsWith(pre, StringComparison.Ordinal))
+                    {
+                        targets.Add(pg);
+                        matched.Add(n);
+                        break;
+                    }
+                }
+            }
+            results["pages_before"] = total;
+            results["matched"] = matched;
+            results["dry_run"] = DRYRUN;
+
+            if (matched.Count > MAXPAGES)
+                throw new Exception("REFUSING: " + matched.Count + " pages match, more than " +
+                    "max_pages=" + MAXPAGES + ". Narrow the prefixes or raise max_pages.");
+            if (matched.Count > 0 && matched.Count == total)
+                throw new Exception("REFUSING: the prefixes match every page of the project.");
+
+            if (!DRYRUN)
+            {
+                List<string> removed = new List<string>();
+                for (int i = 0; i < targets.Count; i++)
+                {
+                    object pg = targets[i];
+                    MethodInfo rm = RequireMethod(pg.GetType(), "Remove", new string[] { }, false);
+                    try { Call(rm, pg, null); }
+                    catch (Exception ex)
+                    {
+                        results["removed"] = removed;
+                        throw new Exception("Stopped at page '" + matched[i] + "' after removing " +
+                            removed.Count + ": " + Flatten(ex));
+                    }
+                    removed.Add(matched[i]);
+                }
+                results["removed"] = removed;
+                int after = 0;
+                IEnumerable again = (IEnumerable)Call(getPages, finder, new object[] { filter });
+                foreach (object pg in again) if (pg != null) after++;
+                results["pages_after"] = after;
+            }
+            results["success"] = true;
+'''
+    body = _fill(body,
+                 EXPECTED='"%s"' % cs_escape(expected),
+                 PREFIXES=prefixes_cs,
+                 MAXPAGES=str(max_pages),
+                 DRYRUN=cs_bool(dry_run))
+
+    return _shape(_execute_script(
+        _script(_cls("RemovePages"), body, extra_helpers=_HELPERS_SCHEMATIC),
+        timeout=timeout_seconds,
+    ))
+
+
 # ---------------------------------------------------------------------------
 # 7. Verify a page against an expectation
 # ---------------------------------------------------------------------------

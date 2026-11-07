@@ -39,7 +39,7 @@ Use one of these whenever you are unsure of an exact action name or parameter â€
 
 ## 2. The local `eplan` action server
 
-It exposes **220 tools** (full tool-by-tool reference: [covaga.dev/docs/tools](https://covaga.dev/docs/tools/project-and-workspace-management/)):
+It exposes **221 tools** (full tool-by-tool reference: [covaga.dev/docs/tools](https://covaga.dev/docs/tools/project-and-workspace-management/)):
 
 - **8 connection/utility tools**: `eplan_versions`, `eplan_servers`,
   `eplan_connect`, `eplan_status`, `eplan_ping`, `eplan_test`,
@@ -80,7 +80,10 @@ It exposes **220 tools** (full tool-by-tool reference: [covaga.dev/docs/tools](h
   `eplan_live_remove_placement`) that CREATE a schematic rather than only
   reading one - every write returns the page read-back as proof and an undo
   handle, and writes refuse a project outside the scratch root unless
-  `allow_real_project=True`, plus `eplan_live_verify_page` (check a page against
+  `allow_real_project=True`, plus `eplan_live_remove_pages` (bulk-delete pages by
+  name prefix, e.g. trimming a copied project to one structure; dry run by
+  default, and it refuses unless the current project is the `expected_project`
+  path you name), plus `eplan_live_verify_page` (check a page against
   a description written in live_read_page's own schema, so the read format
   doubles as the specification format) and `eplan_live_set_device_tag` (a placed
   function is anonymous until tagged; a duplicate tag is refused by default
