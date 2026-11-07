@@ -220,6 +220,7 @@ WRITERS = [
     ("place_symbol", lambda **kw: S.live_place_symbol("P", "LIB", "SL", 1.0, 2.0, **kw)),
     ("remove", lambda **kw: S.live_remove_placement("P", handle="h", **kw)),
     ("remove_page", lambda **kw: S.live_remove_placement("P", remove_page=True, **kw)),
+    ("remove_pages", lambda **kw: S.live_remove_pages(["=U1"], r"C:\P\x.elk", dry_run=False, **kw)),
 ]
 
 
@@ -425,6 +426,7 @@ SCHEMATIC_TOOL_NAMES = (
     "eplan_live_connect_pins",
     "eplan_live_read_page",
     "eplan_live_remove_placement",
+    "eplan_live_remove_pages",
 )
 
 
