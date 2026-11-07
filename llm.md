@@ -39,7 +39,7 @@ Use one of these whenever you are unsure of an exact action name or parameter â€
 
 ## 2. The local `eplan` action server
 
-It exposes **221 tools** (full tool-by-tool reference: [covaga.dev/docs/tools](https://covaga.dev/docs/tools/project-and-workspace-management/)):
+It exposes **226 tools** (full tool-by-tool reference: [covaga.dev/docs/tools](https://covaga.dev/docs/tools/project-and-workspace-management/)):
 
 - **8 connection/utility tools**: `eplan_versions`, `eplan_servers`,
   `eplan_connect`, `eplan_status`, `eplan_ping`, `eplan_test`,
@@ -83,7 +83,16 @@ It exposes **221 tools** (full tool-by-tool reference: [covaga.dev/docs/tools](h
   `allow_real_project=True`, plus `eplan_live_remove_pages` (bulk-delete pages by
   name prefix, e.g. trimming a copied project to one structure; dry run by
   default, and it refuses unless the current project is the `expected_project`
-  path you name), plus `eplan_live_verify_page` (check a page against
+  path you name), plus `eplan_live_swap_article` (replace one article on named
+  devices, e.g. a 16 A breaker by a 20 A one, leaving other articles on the device
+  alone; with `old_part=None` it adds an article to devices that have none;
+  dry run by default, all-or-nothing, same `expected_project` guard), plus
+  `eplan_live_split_terminal_levels` (make level 2 of a double-deck terminal its own
+  terminal), `eplan_live_remove_placements` (bulk remove on one page, all-or-nothing,
+  type-checked) and `eplan_live_place_cable` (draw a cable definition line across
+  existing connections, tag it, set its article and number its conductors in line
+  order) and `eplan_live_place_devices` (place and tag several devices in one call,
+  refusing tags that already exist), plus `eplan_live_verify_page` (check a page against
   a description written in live_read_page's own schema, so the read format
   doubles as the specification format) and `eplan_live_set_device_tag` (a placed
   function is anonymous until tagged; a duplicate tag is refused by default
