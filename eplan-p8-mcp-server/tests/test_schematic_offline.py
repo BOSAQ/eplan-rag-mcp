@@ -221,6 +221,12 @@ WRITERS = [
     ("remove", lambda **kw: S.live_remove_placement("P", handle="h", **kw)),
     ("remove_page", lambda **kw: S.live_remove_placement("P", remove_page=True, **kw)),
     ("remove_pages", lambda **kw: S.live_remove_pages(["=U1"], r"C:\P\x.elk", dry_run=False, **kw)),
+    ("swap_article", lambda **kw: S.live_swap_article("=A+-K1", "OLD.1", "NEW.1", r"C:\P\x.elk", dry_run=False, **kw)),
+    ("swap_article_add", lambda **kw: S.live_swap_article("=A+-X1:2", None, "NEW.1", r"C:\P\x.elk", dry_run=False, function_type="Terminal", **kw)),
+    ("split_levels", lambda **kw: S.live_split_terminal_levels(["=A+-X1:2"], r"C:\P\x.elk", dry_run=False, **kw)),
+    ("remove_many", lambda **kw: S.live_remove_placements("P", ["1/2/3/0"], r"C:\P\x.elk", dry_run=False, **kw)),
+    ("place_cable", lambda **kw: S.live_place_cable("P", 0, 10, 50, 10, "=A+-W1", r"C:\P\x.elk", **kw)),
+    ("place_devices", lambda **kw: S.live_place_devices("P", [{"x": 1, "y": 2, "tag": "=A+-X1:1"}], "C:/P/x.elk", symbol="X4_B", **kw)),
 ]
 
 
@@ -427,6 +433,11 @@ SCHEMATIC_TOOL_NAMES = (
     "eplan_live_read_page",
     "eplan_live_remove_placement",
     "eplan_live_remove_pages",
+    "eplan_live_swap_article",
+    "eplan_live_split_terminal_levels",
+    "eplan_live_remove_placements",
+    "eplan_live_place_cable",
+    "eplan_live_place_devices",
 )
 
 

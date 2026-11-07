@@ -144,7 +144,11 @@ _HELPERS_SCHEMATIC = r'''
         "TNodeUp", "TNodeDown", "TNodeLeft", "TNodeRight",
         "InterruptionPoint", "ConnectionDefinition",
         "PotentialDefinition", "PotentialTerminal",
-        "Shielding", "CableDefinitionLine", "NetDefinition" };
+        "Shielding", "CableDefinitionLine", "NetDefinition",
+        // SPECIAL/ACBP, the autoconnect break placed between adjacent terminals
+        // so their side connection points do not join. Placed through
+        // SymbolVariant.Create like the rest; found on a real terminal row.
+        "ConnectionBreakpoint" };
 
     // ---- the scratch guard -------------------------------------------------
     // Re-checked HERE, inside the LockingStep, against the project EPLAN really
@@ -1475,6 +1479,34 @@ def live_remove_placement(page: str, handle: str = None,
 # Prefixes this short would select (nearly) every page of a project.
 _TOO_BROAD_PREFIXES = {"=", "+", "&", "/", "-", "#"}
 
+# Shared C# check for the bulk / real-project writers: the live tools act on
+# whichever project is CURRENT in EPLAN, so they refuse unless that is the
+# .elk the caller named. Needs the EXPECTED token filled in.
+_EXPECTED_PROJECT_CHECK = '''
+            string expected = EXPECTED.Replace("/", "\\\\").ToUpperInvariant();
+            string current = null;
+            foreach (string pn in new string[] { "ProjectLinkFilePath", "ProjectFullName" })
+            {
+                string v = SafeText(TryRead(project, pn, null));
+                if (!string.IsNullOrEmpty(v)) { current = v; break; }
+            }
+            if (current == null)
+                throw new Exception("Cannot read the current project's path - refusing to write.");
+            results["projectPath"] = current;
+            if (current.Replace("/", "\\\\").ToUpperInvariant() != expected)
+                throw new Exception("REFUSING: the current project is '" + current +
+                    "', not the expected '" + EXPECTED + "'. Make the expected project " +
+                    "current in EPLAN (open it / select it in the page navigator) and retry.");
+'''
+
+
+def _expected_elk(expected_project):
+    """Validate and return the expected_project path (raises SchematicValueError)."""
+    expected = cs_text(expected_project, "expected_project").strip()
+    if not expected.lower().endswith(".elk"):
+        raise SchematicValueError("expected_project must be the full path of a .elk file.")
+    return expected
+
 
 def live_remove_pages(prefixes, expected_project: str, dry_run: bool = True,
                       max_pages: int = 200, allow_real_project: bool = False,
@@ -1529,9 +1561,7 @@ def live_remove_pages(prefixes, expected_project: str, dry_run: bool = True,
                 raise SchematicValueError(
                     "prefix %r is too broad: it would match (nearly) every page." % p)
             clean.append(p)
-        expected = cs_text(expected_project, "expected_project").strip()
-        if not expected.lower().endswith(".elk"):
-            raise SchematicValueError("expected_project must be the full path of a .elk file.")
+        expected = _expected_elk(expected_project)
         max_pages = int(max_pages)
         if max_pages < 1:
             raise SchematicValueError("max_pages must be at least 1.")
@@ -1539,22 +1569,7 @@ def live_remove_pages(prefixes, expected_project: str, dry_run: bool = True,
         return _err(exc)
 
     prefixes_cs = ", ".join('"%s"' % cs_escape(p) for p in clean)
-    body = _guard_prelude(allow_real_project) + '''
-            string expected = EXPECTED.Replace("/", "\\\\").ToUpperInvariant();
-            string current = null;
-            foreach (string pn in new string[] { "ProjectLinkFilePath", "ProjectFullName" })
-            {
-                string v = SafeText(TryRead(project, pn, null));
-                if (!string.IsNullOrEmpty(v)) { current = v; break; }
-            }
-            if (current == null)
-                throw new Exception("Cannot read the current project's path - refusing to remove pages.");
-            results["projectPath"] = current;
-            if (current.Replace("/", "\\\\").ToUpperInvariant() != expected)
-                throw new Exception("REFUSING: the current project is '" + current +
-                    "', not the expected '" + EXPECTED + "'. Make the expected project " +
-                    "current in EPLAN (open it / select it in the page navigator) and retry.");
-
+    body = _guard_prelude(allow_real_project) + _EXPECTED_PROJECT_CHECK + '''
             string[] prefixes = new string[] { PREFIXES };
             Type finderType = FindType("Eplan.EplApi.DataModel.DMObjectsFinder");
             object finder = Activator.CreateInstance(finderType, new object[] { project });
@@ -1627,6 +1642,940 @@ def live_remove_pages(prefixes, expected_project: str, dry_run: bool = True,
         _script(_cls("RemovePages"), body, extra_helpers=_HELPERS_SCHEMATIC),
         timeout=timeout_seconds,
     ))
+
+
+def live_swap_article(devices, old_part, new_part: str, expected_project: str,
+                      dry_run: bool = True, allow_real_project: bool = False,
+                      function_type: str = None,
+                      timeout_seconds: float = 120.0) -> dict:
+    """
+    Replace one article (part number) on named devices, e.g. a 16 A breaker by a 20 A one.
+    WRITES (unless dry_run) - scratch-only by default.
+
+    For every device in `devices` the tool looks at all functions with exactly that
+    identifying name (a breaker and its auxiliary contact share one) and changes the
+    article reference whose part number is `old_part` to `new_part`, keeping its
+    variant. Any other article on the same device (an auxiliary contact, a label, a
+    mounting accessory) is left alone.
+
+    ADD MODE: pass old_part=None (or "") to give `new_part` to devices that carry
+    no article at all - e.g. level 2 of a double-deck terminal that was split off
+    into its own terminal by live_split_terminal_levels. Each device must then
+    resolve to exactly ONE function (use function_type="Terminal" to skip a plug
+    pin or other function sharing the name) and that function must have no
+    article yet.
+
+    Guards, all enforced inside the script against the LIVE project:
+      - expected_project must equal the current project's .elk path.
+      - dry_run defaults to True: the call only reports what it would change.
+      - All-or-nothing: every device must exist and carry `old_part` exactly once
+        (add mode: be one article-less function). If any does not, nothing is
+        changed and the problems are listed.
+      - The usual scratch guard; allow_real_project=True is needed for a real
+        project.
+
+    This changes the article REFERENCE only. If `new_part` is not yet a project
+    article ("new_part_in_project": false in the result), run a project
+    synchronisation from the parts database afterwards
+    (eplan_synchronize_project, SYSTEMPARTSTOPROJECT) so the project gets its data.
+    The symbol and the connection points are not changed, so swap only between
+    articles of the same kind (pole count, connection points).
+
+    Args:
+        devices: One device tag or a list, as the full identifying name,
+            e.g. "=MCP+-31F1" or ["=MCP+-31F1", "=MCP+-32F1"].
+        old_part: Part number to replace, e.g. "SE.A9F87416". None/"" = add mode.
+        new_part: Part number to put in its place, e.g. "SE.A9F89420".
+        function_type: Optional CLR type name the functions must have, e.g.
+            "Terminal". Functions of other types with the same name are ignored.
+        expected_project: Full path of the .elk that must be the current project.
+        dry_run: True (default) to report without changing anything.
+        allow_real_project: Must be True to write outside the scratch root.
+        timeout_seconds: Default 120s.
+
+    Returns:
+        {"success", "projectPath", "dry_run", "changes" ([{device, old, new, variant}]),
+         "untouched" (other articles on those devices), "new_part_in_project",
+         and when not a dry run: "verified" (device -> part numbers read back)}.
+    """
+    if isinstance(devices, str):
+        devices = [devices]
+    if not isinstance(devices, (list, tuple)) or not devices:
+        return {"success": False, "error": "devices must be a non-empty list of device tags."}
+    try:
+        clean = []
+        for d in devices:
+            d = cs_text(d, "device").strip()
+            if not d:
+                raise SchematicValueError("an empty device tag was given.")
+            if d in clean:
+                raise SchematicValueError("device %r is listed twice." % d)
+            clean.append(d)
+        if len(clean) > 200:
+            raise SchematicValueError("at most 200 devices per call.")
+        old = "" if old_part in (None, "") else cs_text(old_part, "old_part").strip()
+        new = cs_text(new_part, "new_part").strip()
+        if not new:
+            raise SchematicValueError("new_part is required.")
+        if old == new:
+            raise SchematicValueError("old_part and new_part are the same.")
+        ftype = ""
+        if function_type not in (None, ""):
+            ftype = cs_text(function_type, "function_type").strip()
+            if not re.match(r"^[A-Za-z][A-Za-z0-9_]*$", ftype):
+                raise SchematicValueError("function_type must be a CLR type name like 'Terminal'.")
+        expected = _expected_elk(expected_project)
+    except (SchematicValueError, TypeError, ValueError) as exc:
+        return _err(exc)
+
+    body = _guard_prelude(allow_real_project) + _EXPECTED_PROJECT_CHECK + '''
+            string[] devs = new string[] { DEVICES };
+            string oldPart = OLDPART;
+            string newPart = NEWPART;
+            string ftype = FTYPE;
+            bool addMode = oldPart.Length == 0;
+            results["mode"] = addMode ? "add" : "swap";
+
+            Type finderType = FindType("Eplan.EplApi.DataModel.DMObjectsFinder");
+            object finder = Activator.CreateInstance(finderType, new object[] { project });
+            Type filterType = FindType("Eplan.EplApi.DataModel.FunctionsFilter");
+            object filter = Activator.CreateInstance(filterType);
+            MethodInfo getFunctions = RequireMethod(finderType, "GetFunctions",
+                new string[] { filterType.Name }, false);
+
+            // Plan first, write nothing until every device checks out.
+            List<object> refsToChange = new List<object>();
+            List<string> refDevice = new List<string>();
+            List<Dictionary<string, object>> changes = new List<Dictionary<string, object>>();
+            List<Dictionary<string, object>> untouched = new List<Dictionary<string, object>>();
+            Dictionary<string, object> mainFn = new Dictionary<string, object>();
+            int[] found = new int[devs.Length];
+            int[] hits = new int[devs.Length];
+            int[] existing = new int[devs.Length];
+            IEnumerable funcs = (IEnumerable)Call(getFunctions, finder, new object[] { filter });
+            foreach (object fn in funcs)
+            {
+                if (fn == null) continue;
+                string n = PropText(fn, "Name");
+                int di = Array.IndexOf(devs, n);
+                if (di < 0) continue;
+                if (ftype.Length > 0 && fn.GetType().Name != ftype) continue;
+                // A device is often several functions with the same name (the
+                // breaker and its auxiliary contact, a coil and its contacts,
+                // a terminal and the plug pin it shares a name with).
+                // Count them all; the article test below is what must be unique.
+                found[di]++;
+                if (addMode) mainFn[n] = fn;
+                object refsObj = TryRead(fn, "ArticleReferences", null);
+                if (!(refsObj is IEnumerable)) continue;
+                foreach (object ar in (IEnumerable)refsObj)
+                {
+                    if (ar == null) continue;
+                    string pnr = SafeText(TryRead(ar, "PartNr", null));
+                    existing[di]++;
+                    Dictionary<string, object> e = new Dictionary<string, object>();
+                    e["device"] = n;
+                    if (!addMode && pnr == oldPart)
+                    {
+                        hits[di]++;
+                        mainFn[n] = fn;   // the function that carries the article, for the read-back
+                        e["old"] = pnr;
+                        e["new"] = newPart;
+                        e["variant"] = SafeText(TryRead(ar, "VariantNr", null));
+                        changes.Add(e);
+                        refsToChange.Add(ar);
+                        refDevice.Add(n);
+                    }
+                    else
+                    {
+                        e["partNr"] = pnr;
+                        untouched.Add(e);
+                    }
+                }
+            }
+            if (addMode)
+                for (int i = 0; i < devs.Length; i++)
+                    if (found[i] == 1 && existing[i] == 0)
+                    {
+                        Dictionary<string, object> e = new Dictionary<string, object>();
+                        e["device"] = devs[i]; e["old"] = ""; e["new"] = newPart;
+                        changes.Add(e);
+                    }
+            results["changes"] = changes;
+            results["untouched"] = untouched;
+            results["dry_run"] = DRYRUN;
+
+            bool inProject = false;
+            object arts = TryRead(project, "Articles", null);
+            if (arts is IEnumerable)
+                foreach (object a in (IEnumerable)arts)
+                    if (a != null && SafeText(TryRead(a, "PartNr", null)) == newPart) { inProject = true; break; }
+            results["new_part_in_project"] = inProject;
+
+            List<string> problems = new List<string>();
+            for (int i = 0; i < devs.Length; i++)
+            {
+                if (found[i] == 0) problems.Add(devs[i] + ": no such device" +
+                    (ftype.Length > 0 ? " of type " + ftype : ""));
+                else if (addMode && found[i] > 1) problems.Add(devs[i] + ": " + found[i] +
+                    " functions with this name - narrow it with function_type");
+                else if (addMode && existing[i] > 0) problems.Add(devs[i] + ": already has an article");
+                else if (!addMode && hits[i] == 0) problems.Add(devs[i] + ": does not carry " + oldPart);
+                else if (!addMode && hits[i] > 1) problems.Add(devs[i] + ": carries " + oldPart + " " + hits[i] + " times");
+            }
+            if (problems.Count > 0)
+            {
+                results["problems"] = problems;
+                throw new Exception("REFUSING, nothing changed: " + string.Join("; ", problems.ToArray()));
+            }
+
+            if (!DRYRUN && addMode)
+            {
+                List<string> done = new List<string>();
+                foreach (string d in devs)
+                {
+                    object fn = mainFn[d];
+                    try
+                    {
+                        MethodInfo add = RequireMethod(fn.GetType(), "AddArticleReference",
+                            new string[] { "String", "String", "UInt32" }, false);
+                        Call(add, fn, new object[] { newPart, "1", (uint)1 });
+                    }
+                    catch (Exception ex)
+                    {
+                        results["changed_before_error"] = done;
+                        throw new Exception("Stopped at " + d + " after adding to " +
+                            done.Count + ": " + Flatten(ex));
+                    }
+                    done.Add(d);
+                }
+            }
+            if (!DRYRUN && !addMode)
+            {
+                List<string> done = new List<string>();
+                for (int i = 0; i < refsToChange.Count; i++)
+                {
+                    object ar = refsToChange[i];
+                    try
+                    {
+                        PropertyInfo pi = ar.GetType().GetProperty("PartNr");
+                        if (pi == null || !pi.CanWrite)
+                            throw new Exception("ArticleReference.PartNr is not writable");
+                        pi.SetValue(ar, newPart, null);
+                        MethodInfo st = RequireMethod(ar.GetType(), "StoreToObject", new string[] { }, false);
+                        Call(st, ar, null);
+                    }
+                    catch (Exception ex)
+                    {
+                        results["changed_before_error"] = done;
+                        throw new Exception("Stopped at " + refDevice[i] + " after changing " +
+                            done.Count + ": " + Flatten(ex));
+                    }
+                    done.Add(refDevice[i]);
+                }
+            }
+            if (!DRYRUN)
+            {
+                // Read back from the function, not from the reference we wrote.
+                Dictionary<string, object> verified = new Dictionary<string, object>();
+                foreach (string d in devs)
+                {
+                    List<string> parts = new List<string>();
+                    object refsObj = TryRead(mainFn[d], "ArticleReferences", null);
+                    if (refsObj is IEnumerable)
+                        foreach (object ar in (IEnumerable)refsObj)
+                            if (ar != null) parts.Add(SafeText(TryRead(ar, "PartNr", null)));
+                    verified[d] = parts;
+                    if (!parts.Contains(newPart) || (!addMode && parts.Contains(oldPart)))
+                        throw new Exception("Read-back of " + d + " does not show the change: " +
+                            string.Join(", ", parts.ToArray()));
+                }
+                results["verified"] = verified;
+            }
+            results["success"] = true;
+'''
+    body = _fill(body,
+                 EXPECTED='"%s"' % cs_escape(expected),
+                 DEVICES=", ".join('"%s"' % cs_escape(d) for d in clean),
+                 OLDPART='"%s"' % cs_escape(old),
+                 NEWPART='"%s"' % cs_escape(new),
+                 FTYPE='"%s"' % ftype,
+                 DRYRUN=cs_bool(dry_run))
+
+    return _shape(_execute_script(
+        _script(_cls("SwapArticle"), body, extra_helpers=_HELPERS_SCHEMATIC),
+        timeout=timeout_seconds,
+    ))
+
+
+def live_split_terminal_levels(terminals, expected_project: str, dry_run: bool = True,
+                               allow_real_project: bool = False,
+                               timeout_seconds: float = 120.0) -> dict:
+    """
+    Turn secondary levels of multi-level terminals into terminals of their own.
+    WRITES (unless dry_run) - scratch-only by default.
+
+    A double-deck terminal such as WAGO 2002-2401 is drawn as two terminals,
+    e.g. X31:1 (main terminal, level 1, carries the article) and X31:2 (not main,
+    level 2, no article) sharing one terminal device position. To replace it by
+    two single-level terminals, each secondary level named here gets:
+      IsMainTerminal = true, FUNC_TERMINALLEVEL = 1, and a NEW
+      FUNC_TERMINALDEVICEPOSITION (one past the highest in its strip),
+    so EPLAN treats it as a separate physical terminal. Give it its article
+    afterwards with live_swap_article in add mode (old_part=None,
+    function_type="Terminal"), and change the former main terminal's article
+    with a normal swap.
+
+    Guards: expected_project must be current; dry run by default; all-or-nothing
+    (every name must be exactly one Terminal that is NOT yet a main terminal);
+    the usual scratch guard (allow_real_project=True for a real project).
+
+    Args:
+        terminals: Terminal names, e.g. ["=MCP+-X31:2", "=MCP+-X31:4"].
+        expected_project: Full path of the .elk that must be the current project.
+        dry_run: True (default) to report without changing anything.
+        allow_real_project: Must be True to write outside the scratch root.
+        timeout_seconds: Default 120s.
+
+    Returns:
+        {"success", "dry_run", "plan" ([{terminal, level, devicePosition,
+         newDevicePosition}]), and when not a dry run "verified"}.
+    """
+    if isinstance(terminals, str):
+        terminals = [terminals]
+    if not isinstance(terminals, (list, tuple)) or not terminals:
+        return {"success": False, "error": "terminals must be a non-empty list of terminal names."}
+    try:
+        clean = []
+        for t in terminals:
+            t = cs_text(t, "terminal").strip()
+            if ":" not in t:
+                raise SchematicValueError("terminal %r has no ':' - give the full name, e.g. '=MCP+-X31:2'." % t)
+            if t in clean:
+                raise SchematicValueError("terminal %r is listed twice." % t)
+            clean.append(t)
+        if len(clean) > 200:
+            raise SchematicValueError("at most 200 terminals per call.")
+        expected = _expected_elk(expected_project)
+    except (SchematicValueError, TypeError, ValueError) as exc:
+        return _err(exc)
+
+    body = _guard_prelude(allow_real_project) + _EXPECTED_PROJECT_CHECK + '''
+            string[] terms = new string[] { TERMINALS };
+            Type finderType = FindType("Eplan.EplApi.DataModel.DMObjectsFinder");
+            object finder = Activator.CreateInstance(finderType, new object[] { project });
+            Type filterType = FindType("Eplan.EplApi.DataModel.FunctionsFilter");
+            object filter = Activator.CreateInstance(filterType);
+            MethodInfo getFunctions = RequireMethod(finderType, "GetFunctions",
+                new string[] { filterType.Name }, false);
+
+            Dictionary<string, object> target = new Dictionary<string, object>();
+            int[] found = new int[terms.Length];
+            Dictionary<string, int> maxPos = new Dictionary<string, int>();
+            IEnumerable funcs = (IEnumerable)Call(getFunctions, finder, new object[] { filter });
+            foreach (object fn in funcs)
+            {
+                if (fn == null || fn.GetType().Name != "Terminal") continue;
+                string n = PropText(fn, "Name");
+                if (n == null) continue;
+                int colon = n.LastIndexOf(':');
+                if (colon < 0) continue;
+                string strip = n.Substring(0, colon);
+                object props = TryRead(fn, "Properties", null);
+                int pos = 0;
+                if (props != null)
+                    int.TryParse(SafeText(TryRead(props, "FUNC_TERMINALDEVICEPOSITION", null)), out pos);
+                int cur;
+                if (!maxPos.TryGetValue(strip, out cur) || pos > cur) maxPos[strip] = pos;
+                int ti = Array.IndexOf(terms, n);
+                if (ti < 0) continue;
+                found[ti]++;
+                target[n] = fn;
+            }
+
+            List<string> problems = new List<string>();
+            List<Dictionary<string, object>> plan = new List<Dictionary<string, object>>();
+            Dictionary<string, int> nextPos = new Dictionary<string, int>();
+            for (int i = 0; i < terms.Length; i++)
+            {
+                if (found[i] == 0) { problems.Add(terms[i] + ": no such terminal"); continue; }
+                if (found[i] > 1) { problems.Add(terms[i] + ": " + found[i] + " terminals with this name"); continue; }
+                object fn = target[terms[i]];
+                string isMain = SafeText(TryRead(fn, "IsMainTerminal", null));
+                object props = TryRead(fn, "Properties", null);
+                string level = props == null ? null : SafeText(TryRead(props, "FUNC_TERMINALLEVEL", null));
+                string dpos = props == null ? null : SafeText(TryRead(props, "FUNC_TERMINALDEVICEPOSITION", null));
+                if (isMain == "True") { problems.Add(terms[i] + ": already a main terminal"); continue; }
+                string strip = terms[i].Substring(0, terms[i].LastIndexOf(':'));
+                int np;
+                if (!nextPos.TryGetValue(strip, out np)) np = maxPos[strip];
+                np++;
+                nextPos[strip] = np;
+                Dictionary<string, object> e = new Dictionary<string, object>();
+                e["terminal"] = terms[i];
+                e["isMainTerminal"] = isMain;
+                e["level"] = level;
+                e["devicePosition"] = dpos;
+                e["newDevicePosition"] = np;
+                plan.Add(e);
+            }
+            results["plan"] = plan;
+            results["dry_run"] = DRYRUN;
+            if (problems.Count > 0)
+            {
+                results["problems"] = problems;
+                throw new Exception("REFUSING, nothing changed: " + string.Join("; ", problems.ToArray()));
+            }
+
+            if (!DRYRUN)
+            {
+                List<Dictionary<string, object>> verified = new List<Dictionary<string, object>>();
+                foreach (Dictionary<string, object> e in plan)
+                {
+                    string name = (string)e["terminal"];
+                    object fn = target[name];
+                    try
+                    {
+                        PropertyInfo mp = fn.GetType().GetProperty("IsMainTerminal");
+                        if (mp == null || !mp.CanWrite) throw new Exception("Terminal.IsMainTerminal is not writable");
+                        object props = TryRead(fn, "Properties", null);
+                        SetProp(props, "FUNC_TERMINALDEVICEPOSITION", (int)e["newDevicePosition"]);
+                        SetProp(props, "FUNC_TERMINALLEVEL", 1);
+                        mp.SetValue(fn, true, null);
+                    }
+                    catch (Exception ex)
+                    {
+                        results["verified"] = verified;
+                        throw new Exception("Stopped at " + name + " after " + verified.Count +
+                            " terminals: " + Flatten(ex));
+                    }
+                    object p2 = TryRead(fn, "Properties", null);
+                    Dictionary<string, object> v = new Dictionary<string, object>();
+                    v["terminal"] = name;
+                    v["isMainTerminal"] = SafeText(TryRead(fn, "IsMainTerminal", null));
+                    v["level"] = SafeText(TryRead(p2, "FUNC_TERMINALLEVEL", null));
+                    v["devicePosition"] = SafeText(TryRead(p2, "FUNC_TERMINALDEVICEPOSITION", null));
+                    verified.Add(v);
+                    if ((string)v["isMainTerminal"] != "True")
+                        throw new Exception("Read-back: " + name + " is still not a main terminal.");
+                }
+                results["verified"] = verified;
+            }
+            results["success"] = true;
+'''
+    body = _fill(body,
+                 EXPECTED='"%s"' % cs_escape(expected),
+                 TERMINALS=", ".join('"%s"' % cs_escape(t) for t in clean),
+                 DRYRUN=cs_bool(dry_run))
+    return _shape(_execute_script(
+        _script(_cls("SplitLevels"), body, extra_helpers=_HELPERS_SCHEMATIC),
+        timeout=timeout_seconds,
+    ))
+
+
+def live_remove_placements(page: str, handles, expected_project: str,
+                           expect_types=None, dry_run: bool = True,
+                           allow_real_project: bool = False,
+                           timeout_seconds: float = 180.0) -> dict:
+    """
+    Remove several placements from ONE page in one call. WRITES (unless dry_run).
+
+    The bulk form of live_remove_placement, for clearing e.g. a plug and its 14
+    pins, or a cable definition and its conductor points. Handles are resolved on
+    the named page only. All-or-nothing: if any handle does not resolve on that
+    page, or resolves to a type outside `expect_types`, nothing is removed.
+
+    Args:
+        page: Page name.
+        handles: List of handles from live_read_page (session-scoped).
+        expected_project: Full path of the .elk that must be the current project.
+        expect_types: Optional list of allowed CLR type names, e.g.
+            ["Plug", "PlugStrip"]. Strongly recommended.
+        dry_run: True (default) to list what would be removed.
+        allow_real_project: Must be True to write outside the scratch root.
+        timeout_seconds: Default 180s.
+
+    Returns:
+        {"success", "dry_run", "targets" ([{handle, type, name, location}]),
+         and when not a dry run "removed" (count) and "page_after"}.
+    """
+    if isinstance(handles, str):
+        handles = [handles]
+    if not isinstance(handles, (list, tuple)) or not handles:
+        return {"success": False, "error": "handles must be a non-empty list."}
+    if isinstance(expect_types, str):
+        expect_types = [expect_types]
+    try:
+        page_cs = cs_text(page, "page").strip()
+        if not page_cs:
+            raise SchematicValueError("page is required.")
+        hs = []
+        for h in handles:
+            h = cs_text(h, "handle").strip()
+            if not re.match(r"^\d+(/\d+)+$", h):
+                raise SchematicValueError("handle %r does not look like '798/17/35375/0'." % h)
+            if h in hs:
+                raise SchematicValueError("handle %r is listed twice." % h)
+            hs.append(h)
+        if len(hs) > 500:
+            raise SchematicValueError("at most 500 handles per call.")
+        types = []
+        for t in (expect_types or []):
+            t = cs_text(t, "expect_types").strip()
+            if not re.match(r"^[A-Za-z][A-Za-z0-9_]*$", t):
+                raise SchematicValueError("expect_types entries must be CLR type names.")
+            types.append(t)
+        expected = _expected_elk(expected_project)
+    except (SchematicValueError, TypeError, ValueError) as exc:
+        return _err(exc)
+
+    body = _guard_prelude(allow_real_project) + _EXPECTED_PROJECT_CHECK + '''
+            object page = FindPage(project, PAGENAME);
+            string[] hs = new string[] { HANDLES };
+            string[] types = new string[] { TYPES };
+            List<object> objs = new List<object>();
+            List<Dictionary<string, object>> targets = new List<Dictionary<string, object>>();
+            List<string> problems = new List<string>();
+            foreach (string h in hs)
+            {
+                object o = null;
+                try { o = ResolveOnPage(page, h); } catch (Exception ex) { problems.Add(h + ": " + Flatten(ex)); continue; }
+                string tn = o.GetType().Name;
+                if (types.Length > 0 && Array.IndexOf(types, tn) < 0)
+                { problems.Add(h + ": is a " + tn + ", not one of the expected types"); continue; }
+                Dictionary<string, object> d = new Dictionary<string, object>();
+                d["handle"] = h; d["type"] = tn; d["name"] = PropText(o, "Name");
+                objs.Add(o); targets.Add(d);
+            }
+            results["page"] = PropText(page, "Name");
+            results["targets"] = targets;
+            results["dry_run"] = DRYRUN;
+            if (problems.Count > 0)
+            {
+                results["problems"] = problems;
+                throw new Exception("REFUSING, nothing removed: " + string.Join("; ", problems.ToArray()));
+            }
+            if (!DRYRUN)
+            {
+                int removed = 0;
+                for (int i = 0; i < objs.Count; i++)
+                {
+                    object o = objs[i];
+                    // Removing a parent (e.g. a cable definition) can take children
+                    // with it; those are then already gone, which is fine.
+                    if (SafeText(TryRead(o, "IsValid", null)) == "False") { removed++; continue; }
+                    try
+                    {
+                        MethodInfo rm = RequireMethod(o.GetType(), "Remove", new string[] { }, false);
+                        Call(rm, o, null);
+                        removed++;
+                    }
+                    catch (Exception ex)
+                    {
+                        results["removed"] = removed;
+                        throw new Exception("Stopped at " + targets[i]["handle"] + " after removing " +
+                            removed + ": " + Flatten(ex));
+                    }
+                }
+                results["removed"] = removed;
+                results["page_after"] = ReadPage(page, 400, false, null);
+            }
+            results["success"] = true;
+'''
+    body = _fill(body,
+                 EXPECTED='"%s"' % cs_escape(expected),
+                 PAGENAME='"%s"' % cs_escape(page_cs),
+                 HANDLES=", ".join('"%s"' % h for h in hs),
+                 TYPES=", ".join('"%s"' % t for t in types),
+                 DRYRUN=cs_bool(dry_run))
+    return _shape(_execute_script(
+        _script(_cls("RemoveMany"), body, extra_helpers=_HELPERS_SCHEMATIC),
+        timeout=timeout_seconds,
+    ))
+
+
+def live_place_cable(page: str, x1: float, y1: float, x2: float, y2: float, tag: str,
+                     expected_project: str, part_nr: str = None, conductors=None,
+                     allow_real_project: bool = False,
+                     timeout_seconds: float = 120.0) -> dict:
+    """
+    Draw a cable definition line across existing connections, then tag it, give it
+    its article and number its conductors. WRITES - scratch-only by default.
+
+    Uses Cable.Create(Page, SymbolVariant, PointD, PointD) with the SPECIAL/CABDL
+    cable-definition symbol: EPLAN creates a connection definition point where the
+    line crosses each connection. The line must be straight (horizontal or
+    vertical) and must only cross connections that belong to no other cable.
+
+    After creating, the tool:
+      - names the cable `tag` (e.g. "=MCP+-W31.1"),
+      - adds `part_nr` as its article (optional),
+      - sorts the new conductor points along the line (left to right, or top to
+        bottom) and writes `conductors` into CONNECTION_WIRENUMBER in that order,
+        e.g. ["BN", "BK", "GY", "BU", "GNYE"]. The count must match the points
+        created; if it does not, the cable stays drawn, nothing is numbered and the
+        result says so (undo with live_remove_placements).
+
+    Args:
+        page: Page name.
+        x1, y1, x2, y2: Start and end of the cable line in page millimetres.
+        tag: Cable device tag, e.g. "=MCP+-W31.1".
+        expected_project: Full path of the .elk that must be the current project.
+        part_nr: Optional cable article, e.g. "LAPP.00101023".
+        conductors: Optional list of colour/number designations in line order.
+        allow_real_project: Must be True to write outside the scratch root.
+        timeout_seconds: Default 120s.
+
+    Returns:
+        {"success", "page", "handle" (the cable), "name", "conductors"
+         ([{handle, location, wireNumber}]), "undo"}.
+    """
+    try:
+        page_cs = cs_text(page, "page").strip()
+        tag_cs = cs_text(tag, "tag").strip()
+        if not page_cs or not tag_cs:
+            raise SchematicValueError("page and tag are required.")
+        coords = [float(v) for v in (x1, y1, x2, y2)]
+        if any(math.isnan(v) or math.isinf(v) for v in coords):
+            raise SchematicValueError("coordinates must be finite numbers.")
+        if coords[0] != coords[2] and coords[1] != coords[3]:
+            raise SchematicValueError("the cable line must be horizontal or vertical.")
+        if coords[0] == coords[2] and coords[1] == coords[3]:
+            raise SchematicValueError("start and end are the same point.")
+        part_cs = "" if part_nr in (None, "") else cs_text(part_nr, "part_nr").strip()
+        cond = []
+        if conductors is not None:
+            if isinstance(conductors, str) or not isinstance(conductors, (list, tuple)):
+                raise SchematicValueError("conductors must be a list, e.g. ['BN', 'BK', 'GY', 'BU', 'GNYE'].")
+            for c in conductors:
+                c = cs_text(c, "conductor").strip()
+                if not c:
+                    raise SchematicValueError("an empty conductor designation was given.")
+                cond.append(c)
+        expected = _expected_elk(expected_project)
+    except (SchematicValueError, TypeError, ValueError) as exc:
+        return _err(exc)
+
+    body = _guard_prelude(allow_real_project) + _EXPECTED_PROJECT_CHECK + '''
+            object page = FindPage(project, PAGENAME);
+            double ax = X1VAL, ay = Y1VAL, bx = X2VAL, by = Y2VAL;
+            bool horizontal = Math.Abs(ay - by) < 0.001;
+            string[] cond = new string[] { CONDUCTORS };
+            string partNr = PARTNR;
+
+            // Points that exist before, so the new ones can be told apart.
+            List<string> before = new List<string>();
+            foreach (object pl in PagePlacements(page))
+                if (pl != null && pl.GetType().Name == "ConnectionDefinitionPoint") before.Add(Handle(pl));
+
+            Type libType = FindType("Eplan.EplApi.DataModel.MasterData.SymbolLibrary");
+            Type symType = FindType("Eplan.EplApi.DataModel.MasterData.Symbol");
+            Type varType = FindType("Eplan.EplApi.DataModel.MasterData.SymbolVariant");
+            Type cableType = FindType("Eplan.EplApi.DataModel.EObjects.Cable");
+            object lib = libType.GetConstructor(new Type[] { project.GetType(), typeof(string) })
+                .Invoke(new object[] { project, "SPECIAL" });
+            object sym = symType.GetConstructor(new Type[] { libType, typeof(string) })
+                .Invoke(new object[] { lib, "CABDL" });
+            if (sym == null || PropText(sym, "IsValid") != "True")
+                throw new Exception("The cable-definition symbol SPECIAL/CABDL does not resolve.");
+            object variant = varType.GetConstructor(new Type[] { symType, typeof(int) })
+                .Invoke(new object[] { sym, 0 });
+            MethodInfo create = RequireMethod(cableType, "Create",
+                new string[] { "Page", "SymbolVariant", "PointD", "PointD" }, false);
+            Type ptType = create.GetParameters()[2].ParameterType;
+            object cable = Activator.CreateInstance(cableType);
+            Call(create, cable, new object[] { page, variant, MakePoint(ptType, ax, ay), MakePoint(ptType, bx, by) });
+            results["handle"] = Handle(cable);
+            Dictionary<string, object> undo = new Dictionary<string, object>();
+            undo["tool"] = "live_remove_placements";
+            results["undo"] = undo;
+
+            PropertyInfo np = cable.GetType().GetProperty("Name");
+            if (np == null || !np.CanWrite) throw new Exception("Cable.Name is not writable");
+            np.SetValue(cable, TAG, null);
+            results["name"] = PropText(cable, "Name");
+
+            if (partNr.Length > 0)
+            {
+                MethodInfo add = RequireMethod(cable.GetType(), "AddArticleReference",
+                    new string[] { "String", "String", "UInt32" }, false);
+                Call(add, cable, new object[] { partNr, "1", (uint)1 });
+                results["part_nr"] = partNr;
+            }
+
+            // The conductor points this line created, in line order.
+            List<object> pts = new List<object>();
+            foreach (object pl in PagePlacements(page))
+                if (pl != null && pl.GetType().Name == "ConnectionDefinitionPoint" && !before.Contains(Handle(pl)))
+                    pts.Add(pl);
+            pts.Sort(delegate (object p, object q) {
+                double[] a = XY(p), b = XY(q);
+                return horizontal ? a[0].CompareTo(b[0]) : b[1].CompareTo(a[1]);
+            });
+            List<string> undoHandles = new List<string>();
+            undoHandles.Add(Handle(cable));
+            foreach (object p in pts) undoHandles.Add(Handle(p));
+            undo["handles"] = undoHandles;
+
+            // The conductor points are born anonymous ("=+"); naming the cable does
+            // not pass its tag on (measured on 2027). A conductor belongs to a
+            // cable by carrying the cable's device tag, so write it on each one.
+            foreach (object p in pts)
+            {
+                PropertyInfo pn = p.GetType().GetProperty("Name");
+                if (pn != null && pn.CanWrite) pn.SetValue(p, TAG, null);
+            }
+
+            if (cond.Length > 0 && cond.Length != pts.Count)
+            {
+                results["conductor_mismatch"] = "The line crossed " + pts.Count + " connections but " +
+                    cond.Length + " conductor designations were given; nothing was numbered.";
+            }
+            else
+            {
+                for (int i = 0; i < cond.Length; i++)
+                {
+                    object props = TryRead(pts[i], "Properties", null);
+                    SetProp(props, "CONNECTION_WIRENUMBER", cond[i]);
+                }
+            }
+            List<Dictionary<string, object>> outPts = new List<Dictionary<string, object>>();
+            foreach (object p in pts)
+            {
+                Dictionary<string, object> d = new Dictionary<string, object>();
+                double[] xy = XY(p);
+                d["handle"] = Handle(p);
+                d["x"] = xy[0]; d["y"] = xy[1];
+                d["name"] = PropText(p, "Name");
+                object props = TryRead(p, "Properties", null);
+                d["wireNumber"] = props == null ? null : SafeText(TryRead(props, "CONNECTION_WIRENUMBER", null));
+                outPts.Add(d);
+            }
+            results["conductors"] = outPts;
+            results["page"] = PropText(page, "Name");
+            results["success"] = !results.ContainsKey("conductor_mismatch");
+'''
+    body = _fill(body,
+                 EXPECTED='"%s"' % cs_escape(expected),
+                 PAGENAME='"%s"' % cs_escape(page_cs),
+                 X1VAL=repr(coords[0]), Y1VAL=repr(coords[1]),
+                 X2VAL=repr(coords[2]), Y2VAL=repr(coords[3]),
+                 TAG='"%s"' % cs_escape(tag_cs),
+                 PARTNR='"%s"' % cs_escape(part_cs),
+                 CONDUCTORS=", ".join('"%s"' % cs_escape(c) for c in cond))
+    return _shape(_execute_script(
+        _script(_cls("PlaceCable"), body, extra_helpers=_HELPERS_SCHEMATIC + _XY_HELPER),
+        timeout=timeout_seconds,
+    ))
+
+
+def live_place_devices(page: str, items, expected_project: str, library: str = "IEC_symbol",
+                       symbol: str = None, variant_nr: int = 0, object_type: str = "Function",
+                       allow_real_project: bool = False,
+                       timeout_seconds: float = 180.0) -> dict:
+    """
+    Place several devices on one page and give each its device tag, in one call.
+    WRITES - scratch-only by default.
+
+    The bulk form of live_place_symbol + live_set_device_tag, e.g. to draw a local
+    panel's terminal strip opposite the MCP terminals. Each item is
+    {"x", "y", "tag"} and may override "library", "symbol" and "variant_nr".
+    Coordinates are snapped to the page grid. A tag that already exists in the
+    project is refused (it would MERGE devices), checked for ALL items before
+    anything is placed.
+
+    Args:
+        page: Page name.
+        items: [{"x": 132, "y": 96, "tag": "=EC+LPA-X1:1"}, ...].
+        expected_project: Full path of the .elk that must be the current project.
+        library, symbol, variant_nr: Default symbol for items that do not name one,
+            e.g. IEC_symbol / X4_B / 0 for a terminal.
+        object_type: "Function" (default) or "Terminal". A terminal symbol must be
+            created as an EObjects.Terminal - Function.Create throws
+            NotImplementedException for one (measured on 2027).
+        allow_real_project: Must be True to write outside the scratch root.
+        timeout_seconds: Default 180s.
+
+    Returns:
+        {"success", "page", "placed" ([{tag, name, handle, x, y}]), "undo"}.
+    """
+    if not isinstance(items, (list, tuple)) or not items:
+        return {"success": False, "error": "items must be a non-empty list of {x, y, tag}."}
+    try:
+        page_cs = cs_text(page, "page").strip()
+        rows = []
+        tags = set()
+        for it in items:
+            if not isinstance(it, dict):
+                raise SchematicValueError("each item must be a dict with x, y and tag.")
+            lib = cs_text(it.get("library", library), "library").strip()
+            sym = cs_text(it.get("symbol", symbol), "symbol").strip() if it.get("symbol", symbol) else ""
+            if not lib or not sym:
+                raise SchematicValueError("every item needs a library and a symbol.")
+            var = int(it.get("variant_nr", variant_nr))
+            x, y = float(it["x"]), float(it["y"])
+            if any(math.isnan(v) or math.isinf(v) for v in (x, y)):
+                raise SchematicValueError("coordinates must be finite numbers.")
+            tag = cs_text(it.get("tag"), "tag").strip()
+            if not tag:
+                raise SchematicValueError("every item needs a tag.")
+            if tag in tags:
+                raise SchematicValueError("tag %r is listed twice." % tag)
+            tags.add(tag)
+            rows.append((lib, sym, var, x, y, tag))
+        if len(rows) > 100:
+            raise SchematicValueError("at most 100 devices per call.")
+        if object_type not in ("Function", "Terminal"):
+            raise SchematicValueError("object_type must be 'Function' or 'Terminal'.")
+        expected = _expected_elk(expected_project)
+    except (SchematicValueError, TypeError, ValueError, KeyError) as exc:
+        return _err(exc)
+
+    body = _guard_prelude(allow_real_project) + _EXPECTED_PROJECT_CHECK + '''
+            object page = FindPage(project, PAGENAME);
+            string[] libs = new string[] { LIBS };
+            string[] syms = new string[] { SYMS };
+            int[] vars = new int[] { VARS };
+            double[] xs = new double[] { XS };
+            double[] ys = new double[] { YS };
+            string[] tags = new string[] { TAGS };
+            double grid = 0.0;
+            object gridVal = TryRead(page, "GridSize", null);
+            if (gridVal != null) grid = Convert.ToDouble(gridVal);
+
+            // Refuse duplicates against the WHOLE project before placing anything.
+            Type finderType = FindType("Eplan.EplApi.DataModel.DMObjectsFinder");
+            object finder = Activator.CreateInstance(finderType, new object[] { project });
+            Type filterType = FindType("Eplan.EplApi.DataModel.FunctionsFilter");
+            object filter = Activator.CreateInstance(filterType);
+            MethodInfo getFunctions = RequireMethod(finderType, "GetFunctions", new string[] { filterType.Name }, false);
+            List<string> taken = new List<string>();
+            foreach (object fn in (IEnumerable)Call(getFunctions, finder, new object[] { filter }))
+            {
+                if (fn == null) continue;
+                string n = PropText(fn, "Name");
+                if (n != null && Array.IndexOf(tags, n) >= 0 && !taken.Contains(n)) taken.Add(n);
+            }
+            if (taken.Count > 0)
+                throw new Exception("REFUSING, nothing placed: these tags already exist and would merge: " +
+                    string.Join(", ", taken.ToArray()));
+
+            Type libType = FindType("Eplan.EplApi.DataModel.MasterData.SymbolLibrary");
+            Type symType = FindType("Eplan.EplApi.DataModel.MasterData.Symbol");
+            Type varType = FindType("Eplan.EplApi.DataModel.MasterData.SymbolVariant");
+            Type funcType = FindType(OBJTYPE);
+            MethodInfo create = RequireMethod(funcType, "Create",
+                new string[] { "Page", "SymbolVariant", "PointD", "PointD" }, false);
+            Type ptType = create.GetParameters()[2].ParameterType;
+
+            List<Dictionary<string, object>> placed = new List<Dictionary<string, object>>();
+            List<string> undoHandles = new List<string>();
+            Dictionary<string, object> undo = new Dictionary<string, object>();
+            undo["tool"] = "live_remove_placements";
+            undo["handles"] = undoHandles;
+            results["undo"] = undo;
+            results["placed"] = placed;
+            for (int i = 0; i < tags.Length; i++)
+            {
+                double x = xs[i], y = ys[i];
+                if (grid > 0.0001) { x = Snap(x, grid); y = Snap(y, grid); }
+                // A fresh library/symbol/variant per device: a SymbolVariant cannot be reused.
+                object lib = libType.GetConstructor(new Type[] { project.GetType(), typeof(string) })
+                    .Invoke(new object[] { project, libs[i] });
+                object sym = symType.GetConstructor(new Type[] { libType, typeof(string) })
+                    .Invoke(new object[] { lib, syms[i] });
+                if (sym == null || PropText(sym, "IsValid") != "True")
+                    throw new Exception("Symbol " + syms[i] + " does not resolve in " + libs[i] +
+                        " (placed " + placed.Count + " before this).");
+                object variant = varType.GetConstructor(new Type[] { symType, typeof(int) })
+                    .Invoke(new object[] { sym, vars[i] });
+                object fn = Activator.CreateInstance(funcType);
+                if (TWOARG)
+                {
+                    // Terminals: the 4-argument Create throws NotImplementedException
+                    // (measured on 2027) - and a FAILED Create still leaves an
+                    // anonymous object behind at the page origin. So never try it:
+                    // use Create(Page, SymbolVariant), EPLAN's own terminal sample,
+                    // and then position the object.
+                    MethodInfo create2 = RequireMethod(funcType, "Create",
+                        new string[] { "Page", "SymbolVariant" }, false);
+                    try { Call(create2, fn, new object[] { page, variant }); }
+                    catch { RemoveQuietly(fn); throw; }
+                    PropertyInfo lp = fn.GetType().GetProperty("Location");
+                    if (lp == null || !lp.CanWrite)
+                    {
+                        RemoveQuietly(fn);
+                        throw new Exception("Cannot position the new " + funcType.Name +
+                            ": Location is not writable.");
+                    }
+                    lp.SetValue(fn, MakePoint(lp.PropertyType, x, y), null);
+                    results["createRoute"] = "Create(Page, SymbolVariant) + Location";
+                }
+                else
+                {
+                    try { Call(create, fn, new object[] { page, variant, MakePoint(ptType, x, y), MakePoint(ptType, x, y) }); }
+                    catch { RemoveQuietly(fn); throw; }
+                }
+                undoHandles.Add(Handle(fn));
+                PropertyInfo np = fn.GetType().GetProperty("Name");
+                np.SetValue(fn, tags[i], null);
+                Dictionary<string, object> d = new Dictionary<string, object>();
+                d["tag"] = tags[i];
+                d["name"] = PropText(fn, "Name");
+                d["handle"] = Handle(fn);
+                d["x"] = x; d["y"] = y;
+                placed.Add(d);
+            }
+            results["page"] = PropText(page, "Name");
+            results["success"] = true;
+'''
+    body = _fill(body,
+                 EXPECTED='"%s"' % cs_escape(expected),
+                 PAGENAME='"%s"' % cs_escape(page_cs),
+                 LIBS=", ".join('"%s"' % cs_escape(r[0]) for r in rows),
+                 SYMS=", ".join('"%s"' % cs_escape(r[1]) for r in rows),
+                 VARS=", ".join(str(r[2]) for r in rows),
+                 XS=", ".join(repr(r[3]) for r in rows),
+                 YS=", ".join(repr(r[4]) for r in rows),
+                 TAGS=", ".join('"%s"' % cs_escape(r[5]) for r in rows),
+                 OBJTYPE='"Eplan.EplApi.DataModel.%s"' % (
+                     "EObjects.Terminal" if object_type == "Terminal" else "Function"),
+                 TWOARG=cs_bool(object_type == "Terminal"))
+    return _shape(_execute_script(
+        _script(_cls("PlaceMany"), body, extra_helpers=_HELPERS_SCHEMATIC + _REMOVE_QUIETLY),
+        timeout=timeout_seconds,
+    ))
+
+
+# Clean up an object whose Create failed: a failed Create can still leave an
+# anonymous placement at the page origin (measured on 2027, terminals).
+_REMOVE_QUIETLY = r'''
+    static void RemoveQuietly(object o)
+    {
+        try
+        {
+            if (o == null) return;
+            MethodInfo rm = o.GetType().GetMethod("Remove", Type.EmptyTypes);
+            if (rm != null) rm.Invoke(o, null);
+        }
+        catch { }
+    }
+'''
+
+
+# Placement location as [x, y], for sorting conductor points along a cable line.
+_XY_HELPER = r'''
+    static double[] XY(object pl)
+    {
+        object loc = null;
+        try { loc = pl.GetType().GetProperty("Location").GetValue(pl, null); } catch { }
+        if (loc == null) return new double[] { 0, 0 };
+        double x = 0, y = 0;
+        try { x = Convert.ToDouble(loc.GetType().GetProperty("X").GetValue(loc, null)); } catch { }
+        try { y = Convert.ToDouble(loc.GetType().GetProperty("Y").GetValue(loc, null)); } catch { }
+        return new double[] { x, y };
+    }
+'''
 
 
 # ---------------------------------------------------------------------------
